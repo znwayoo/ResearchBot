@@ -60,7 +60,9 @@ class ResearchController(QObject):
         self.response_check_timer = QTimer()
         self.response_check_timer.timeout.connect(self._check_for_response)
         self.response_check_count = 0
-        self.max_response_checks = 60  # 60 seconds max wait
+        self.max_response_checks = 7  # 15 seconds max wait (7 checks * 2 seconds + 1 second initial)
+        self.last_response_length = 0
+        self.stable_response_count = 0  # Count how many times response stayed same length
 
     def start_query(self, user_query: UserQuery):
         """Start a research query across platforms."""
@@ -115,6 +117,10 @@ class ResearchController(QObject):
 
         system_prompt = TaskAnalyzer.build_system_prompt(platform, self.current_query.task.value)
         combined_prompt = f"{system_prompt}\n\n{self.full_prompt}"
+        
+        # Debug: log what's being sent
+        self.statusUpdate.emit(f"Debug: Sending to {platform}, prompt length: {len(combined_prompt)}")
+        print(f"Debug {platform}: system_prompt length: {len(system_prompt)}, full_prompt length: {len(self.full_prompt)}, combined length: {len(combined_prompt)}")
 
         browser.fill_input_and_send(combined_prompt, self._on_query_sent)
 
@@ -122,14 +128,29 @@ class ResearchController(QObject):
         """Handle query sent callback."""
         platform = self.platforms_to_query[self.current_platform_index]
 
-        if result == "sent":
+        # Handle different result types
+        if result is None:
+            result = "unknown error"
+        
+        result_str = str(result) if result else "no result"
+        
+        if result_str == "sent" or result_str.startswith("sent"):
             self.statusUpdate.emit(f"Query sent to {platform}, waiting for response...")
             self.response_check_count = 0
-            self.response_check_timer.start(1000)
+            self.last_response_length = 0
+            self.stable_response_count = 0
+            # Wait a bit before starting to check for response
+            QTimer.singleShot(3000, lambda: self.response_check_timer.start(2000))
         else:
-            self.statusUpdate.emit(f"Failed to send query to {platform}: {result}")
+            error_msg = f"Failed to send query to {platform}"
+            if result_str.startswith("error:"):
+                error_msg += f": {result_str}"
+            elif result_str != "unknown error":
+                error_msg += f": {result_str}"
+            self.statusUpdate.emit(error_msg)
+            self.browser_tabs.append_log(f"{platform} send failed: {result_str}", "ERROR")
             self.current_platform_index += 1
-            QTimer.singleShot(500, self._query_next_platform)
+            QTimer.singleShot(1000, self._query_next_platform)
 
     def _check_for_response(self):
         """Check if response is available."""
@@ -152,30 +173,49 @@ class ResearchController(QObject):
     def _on_response_received(self, response_text):
         """Handle response received from browser."""
         platform = self.platforms_to_query[self.current_platform_index]
+        current_length = len(response_text.strip()) if response_text else 0
 
-        if response_text and len(response_text.strip()) > 50:
-            if self.clipboard.validate_response(response_text):
-                self.response_check_timer.stop()
+        # Check if we have a response and it has stabilized (AI finished generating)
+        if current_length > 50:
+            if current_length == self.last_response_length:
+                self.stable_response_count += 1
+            else:
+                self.stable_response_count = 0
+                self.last_response_length = current_length
 
-                response = PlatformResponse(
-                    platform=PlatformType(platform),
-                    query_id=self.query_id,
-                    response_text=self.clipboard.clean_text(response_text),
-                    timestamp=datetime.now()
-                )
+            # Response is stable if same length for 2 consecutive checks (4 seconds) - reduced for faster processing
+            if self.stable_response_count >= 2:
+                if self.clipboard.validate_response(response_text):
+                    self.response_check_timer.stop()
 
-                self.responses.append(response)
+                    response = PlatformResponse(
+                        platform=PlatformType(platform),
+                        query_id=self.query_id,
+                        response_text=self.clipboard.clean_text(response_text),
+                        timestamp=datetime.now()
+                    )
 
-                try:
-                    self.storage.save_response(response)
-                except Exception:
-                    pass
+                    self.responses.append(response)
 
-                self.statusUpdate.emit(f"Received response from {platform}")
-                self.platformQueried.emit(platform, response_text[:100] + "...")
+                    try:
+                        self.storage.save_response(response)
+                    except Exception:
+                        pass
 
-                self.current_platform_index += 1
-                QTimer.singleShot(2000, self._query_next_platform)
+                    self.statusUpdate.emit(f"Received response from {platform} ({current_length} chars)")
+                    self.platformQueried.emit(platform, response_text[:100] + "...")
+
+                    self.current_platform_index += 1
+                    QTimer.singleShot(2000, self._query_next_platform)
+                    return
+            else:
+                # Still generating, log progress
+                if self.response_check_count % 5 == 0:
+                    self.statusUpdate.emit(f"Waiting for {platform} response... ({current_length} chars so far)")
+        
+        # If we get here and no response yet, continue checking
+        if current_length == 0 and self.response_check_count % 10 == 0:
+            self.statusUpdate.emit(f"Still waiting for {platform} response... (check {self.response_check_count}/{self.max_response_checks})")
 
     def _finish_queries(self):
         """Finish the query process and merge responses."""
