@@ -4,9 +4,12 @@ import logging
 import sys
 import traceback
 
+# WebEngine must be imported before QApplication is created
+from PyQt6.QtWebEngineWidgets import QWebEngineView  # noqa: F401
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
-from config import APP_NAME, LOG_PATH, initialize_directories, setup_logging
+from config import APP_NAME, initialize_directories, setup_logging
 from utils.local_storage import LocalStorage
 
 

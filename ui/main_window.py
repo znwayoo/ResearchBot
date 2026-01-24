@@ -1,15 +1,14 @@
 """Main application window for ResearchBot."""
 
 import uuid
-from typing import Optional
+from datetime import datetime
+from typing import Optional, List
 
-from PyQt6.QtCore import QSettings, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QSettings, Qt, QTimer, pyqtSignal, QObject
 from PyQt6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QMainWindow,
-    QMenu,
-    QMenuBar,
     QMessageBox,
     QSplitter,
     QStatusBar,
@@ -17,35 +16,200 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from agents.orchestrator import Orchestrator
+from agents.file_context_injector import FileContextInjector
+from agents.response_merger import ResponseMerger
+from agents.task_analyzer import TaskAnalyzer
 from config import APP_NAME, APP_VERSION, WINDOW_HEIGHT, WINDOW_WIDTH
 from ui.chat_widget import ChatWidget
 from ui.input_panel import InputPanel
 from ui.sidebar_tabs import BrowserTabs
+from utils.clipboard_parser import ClipboardParser
 from utils.export_service import ExportService
 from utils.local_storage import LocalStorage
-from utils.models import MergedResponse, ModeType, TaskType, UserQuery
+from utils.models import (
+    MergedResponse,
+    ModeType,
+    PlatformResponse,
+    PlatformType,
+    TaskType,
+    UserQuery,
+)
 
 
-class ResearchWorker(QThread):
-    """Background worker for running research queries."""
+class ResearchController(QObject):
+    """Controller for managing research queries across platforms."""
 
     statusUpdate = pyqtSignal(str)
-    finished = pyqtSignal(object)
+    platformQueried = pyqtSignal(str, str)  # platform, response
+    allQueriesComplete = pyqtSignal(object)  # MergedResponse or None
     error = pyqtSignal(str)
 
-    def __init__(self, orchestrator: Orchestrator, query: UserQuery):
-        super().__init__()
-        self.orchestrator = orchestrator
-        self.query = query
+    def __init__(self, browser_tabs: BrowserTabs, parent=None):
+        super().__init__(parent)
+        self.browser_tabs = browser_tabs
+        self.storage = LocalStorage()
+        self.merger = ResponseMerger()
+        self.clipboard = ClipboardParser()
 
-    def run(self):
+        self.current_query: Optional[UserQuery] = None
+        self.platforms_to_query: List[str] = []
+        self.current_platform_index = 0
+        self.responses: List[PlatformResponse] = []
+        self.query_id = ""
+
+        self.response_check_timer = QTimer()
+        self.response_check_timer.timeout.connect(self._check_for_response)
+        self.response_check_count = 0
+        self.max_response_checks = 60  # 60 seconds max wait
+
+    def start_query(self, user_query: UserQuery):
+        """Start a research query across platforms."""
+        self.current_query = user_query
+        self.query_id = str(uuid.uuid4())
+        self.responses = []
+        self.current_platform_index = 0
+
         try:
-            self.orchestrator.status_callback = self.statusUpdate.emit
-            result = self.orchestrator.execute_query(self.query)
-            self.finished.emit(result)
+            self.storage.save_query(user_query)
         except Exception as e:
-            self.error.emit(str(e))
+            self.statusUpdate.emit(f"Warning: Could not save query: {e}")
+
+        self.platforms_to_query = TaskAnalyzer.get_platform_order(
+            user_query.task.value,
+            user_query.model_choice
+        )
+
+        self.statusUpdate.emit(f"Will query: {', '.join(self.platforms_to_query)}")
+
+        file_context = ""
+        if user_query.files:
+            try:
+                file_context = FileContextInjector.build_file_context(user_query.files)
+            except Exception as e:
+                self.statusUpdate.emit(f"Warning: Error processing files: {e}")
+
+        self.full_prompt = FileContextInjector.inject_into_query(
+            user_query.query_text,
+            file_context
+        )
+
+        self._query_next_platform()
+
+    def _query_next_platform(self):
+        """Query the next platform in the list."""
+        if self.current_platform_index >= len(self.platforms_to_query):
+            self._finish_queries()
+            return
+
+        platform = self.platforms_to_query[self.current_platform_index]
+        self.statusUpdate.emit(f"Querying {platform}...")
+
+        browser = self.browser_tabs.get_browser(platform)
+        if not browser:
+            self.statusUpdate.emit(f"Browser not available for {platform}")
+            self.current_platform_index += 1
+            QTimer.singleShot(500, self._query_next_platform)
+            return
+
+        self.browser_tabs.show_platform_tab(platform)
+
+        system_prompt = TaskAnalyzer.build_system_prompt(platform, self.current_query.task.value)
+        combined_prompt = f"{system_prompt}\n\n{self.full_prompt}"
+
+        browser.fill_input_and_send(combined_prompt, self._on_query_sent)
+
+    def _on_query_sent(self, result):
+        """Handle query sent callback."""
+        platform = self.platforms_to_query[self.current_platform_index]
+
+        if result == "sent":
+            self.statusUpdate.emit(f"Query sent to {platform}, waiting for response...")
+            self.response_check_count = 0
+            self.response_check_timer.start(1000)
+        else:
+            self.statusUpdate.emit(f"Failed to send query to {platform}: {result}")
+            self.current_platform_index += 1
+            QTimer.singleShot(500, self._query_next_platform)
+
+    def _check_for_response(self):
+        """Check if response is available."""
+        self.response_check_count += 1
+
+        if self.response_check_count >= self.max_response_checks:
+            self.response_check_timer.stop()
+            platform = self.platforms_to_query[self.current_platform_index]
+            self.statusUpdate.emit(f"Timeout waiting for {platform}")
+            self.current_platform_index += 1
+            QTimer.singleShot(500, self._query_next_platform)
+            return
+
+        platform = self.platforms_to_query[self.current_platform_index]
+        browser = self.browser_tabs.get_browser(platform)
+
+        if browser:
+            browser.get_response_text(self._on_response_received)
+
+    def _on_response_received(self, response_text):
+        """Handle response received from browser."""
+        platform = self.platforms_to_query[self.current_platform_index]
+
+        if response_text and len(response_text.strip()) > 50:
+            if self.clipboard.validate_response(response_text):
+                self.response_check_timer.stop()
+
+                response = PlatformResponse(
+                    platform=PlatformType(platform),
+                    query_id=self.query_id,
+                    response_text=self.clipboard.clean_text(response_text),
+                    timestamp=datetime.now()
+                )
+
+                self.responses.append(response)
+
+                try:
+                    self.storage.save_response(response)
+                except Exception:
+                    pass
+
+                self.statusUpdate.emit(f"Received response from {platform}")
+                self.platformQueried.emit(platform, response_text[:100] + "...")
+
+                self.current_platform_index += 1
+                QTimer.singleShot(2000, self._query_next_platform)
+
+    def _finish_queries(self):
+        """Finish the query process and merge responses."""
+        self.response_check_timer.stop()
+
+        if not self.responses:
+            self.statusUpdate.emit("No valid responses received")
+            self.allQueriesComplete.emit(None)
+            return
+
+        self.statusUpdate.emit("Merging responses...")
+
+        try:
+            merged = self.merger.merge_responses(
+                self.responses,
+                self.query_id,
+                self.current_query.session_id
+            )
+
+            try:
+                self.storage.save_merged(merged)
+            except Exception:
+                pass
+
+            self.statusUpdate.emit("Research complete!")
+            self.allQueriesComplete.emit(merged)
+
+        except Exception as e:
+            self.statusUpdate.emit(f"Error merging responses: {e}")
+            self.allQueriesComplete.emit(None)
+
+    def stop(self):
+        """Stop ongoing query."""
+        self.response_check_timer.stop()
 
 
 class MainWindow(QMainWindow):
@@ -55,10 +219,9 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.storage = LocalStorage()
-        self.orchestrator = Orchestrator(storage=self.storage)
         self.current_session_id = self.storage.create_session()
         self.current_response: Optional[MergedResponse] = None
-        self.worker: Optional[ResearchWorker] = None
+        self.research_controller: Optional[ResearchController] = None
 
         self._setup_ui()
         self._setup_menu()
@@ -107,10 +270,16 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Ready")
 
+        self.research_controller = ResearchController(self.browser_tabs, self)
+        self.research_controller.statusUpdate.connect(self._on_status_update)
+        self.research_controller.allQueriesComplete.connect(self._on_research_complete)
+
         self.chat_widget.add_bot_message(
-            "Welcome to ResearchBot! I can help you research topics across "
-            "multiple AI platforms simultaneously.\n\n"
-            "Upload files, type your query, and click Send to begin."
+            "Welcome to ResearchBot!\n\n"
+            "1. Log in to the AI platforms in the browser tabs on the right\n"
+            "2. Type your research query below\n"
+            "3. Click Send to query all platforms\n\n"
+            "The browsers are embedded - just click a tab and log in!"
         )
 
     def _setup_menu(self):
@@ -150,7 +319,6 @@ class MainWindow(QMainWindow):
     def _connect_signals(self):
         self.input_panel.sendClicked.connect(self._on_send)
         self.input_panel.exportClicked.connect(self._on_export)
-        self.browser_tabs.launchBrowserRequested.connect(self._on_launch_browser)
 
     def _load_settings(self):
         settings = QSettings(APP_NAME, APP_NAME)
@@ -161,24 +329,6 @@ class MainWindow(QMainWindow):
     def _save_settings(self):
         settings = QSettings(APP_NAME, APP_NAME)
         settings.setValue("geometry", self.saveGeometry())
-
-    def _on_launch_browser(self, platform: str):
-        """Launch browser for a platform so user can login."""
-        self.status_bar.showMessage(f"Opening {platform.title()} browser...")
-        self.browser_tabs.append_log(f"Launching {platform} browser...", "INFO")
-
-        try:
-            page = self.orchestrator.browser.get_page(platform)
-            if page:
-                self.browser_tabs.set_platform_status(platform, "Browser open", True)
-                self.browser_tabs.append_log(f"{platform.title()} browser opened successfully", "SUCCESS")
-                self.status_bar.showMessage(f"{platform.title()} browser opened - please login if needed")
-            else:
-                self.browser_tabs.append_log(f"Failed to open {platform} browser", "ERROR")
-                self.status_bar.showMessage(f"Failed to open {platform.title()} browser")
-        except Exception as e:
-            self.browser_tabs.append_log(f"Error opening {platform}: {e}", "ERROR")
-            self.status_bar.showMessage(f"Error: {e}")
 
     def _on_send(self):
         query_text = self.input_panel.get_query()
@@ -210,11 +360,7 @@ class MainWindow(QMainWindow):
         self.input_panel.set_send_enabled(False)
         self.input_panel.set_status("Researching...", "#FF9800")
 
-        self.worker = ResearchWorker(self.orchestrator, user_query)
-        self.worker.statusUpdate.connect(self._on_status_update)
-        self.worker.finished.connect(self._on_research_complete)
-        self.worker.error.connect(self._on_research_error)
-        self.worker.start()
+        self.research_controller.start_query(user_query)
 
         self.input_panel.clear_input()
 
@@ -233,20 +379,12 @@ class MainWindow(QMainWindow):
             self.browser_tabs.append_log("Research complete!", "SUCCESS")
         else:
             self.chat_widget.add_bot_message(
-                "Sorry, I could not get responses from the AI platforms. "
-                "Please make sure you are logged in to each platform."
+                "Sorry, I could not get valid responses from the AI platforms.\n\n"
+                "Please make sure you are logged in to each platform in the browser tabs."
             )
-            self.input_panel.set_status("Failed", "#F44336")
-            self.browser_tabs.append_log("Research failed", "ERROR")
+            self.input_panel.set_status("No responses", "#F44336")
+            self.browser_tabs.append_log("Research failed - no valid responses", "ERROR")
 
-        self.status_bar.showMessage("Ready")
-
-    def _on_research_error(self, error: str):
-        self.input_panel.set_send_enabled(True)
-        self.input_panel.set_status("Error", "#F44336")
-
-        self.chat_widget.add_bot_message(f"An error occurred: {error}")
-        self.browser_tabs.append_log(f"Error: {error}", "ERROR")
         self.status_bar.showMessage("Ready")
 
     def _on_export(self):
@@ -326,19 +464,13 @@ class MainWindow(QMainWindow):
             "A multi-platform AI research orchestration tool.\n\n"
             "Query Gemini, Perplexity, and ChatGPT simultaneously "
             "and get merged, deduplicated responses.\n\n"
-            "Built with Python, PyQt6, and Playwright."
+            "Built with Python and PyQt6."
         )
 
     def closeEvent(self, event):
         self._save_settings()
 
-        if self.worker and self.worker.isRunning():
-            self.worker.terminate()
-            self.worker.wait()
-
-        try:
-            self.orchestrator.cleanup()
-        except Exception:
-            pass
+        if self.research_controller:
+            self.research_controller.stop()
 
         event.accept()

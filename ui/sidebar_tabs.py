@@ -1,9 +1,11 @@
-"""Sidebar tabs widget for browser views and logs."""
+"""Sidebar tabs widget with embedded browser views and logs."""
 
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Optional
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QUrl, pyqtSignal
+from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtWebEngineCore import QWebEngineProfile
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -18,21 +20,167 @@ from PyQt6.QtWidgets import (
 from config import PLATFORMS
 
 
-class PlatformTab(QWidget):
-    """Widget for a single platform browser tab."""
+class PlatformBrowser(QWebEngineView):
+    """Embedded browser for a platform."""
 
-    launchRequested = pyqtSignal(str)
+    responseReady = pyqtSignal(str)
+    pageLoaded = pyqtSignal(str)
+
+    def __init__(self, platform: str, parent=None):
+        super().__init__(parent)
+        self.platform = platform
+        self._setup_browser()
+
+    def _setup_browser(self):
+        """Configure the browser."""
+        profile = QWebEngineProfile.defaultProfile()
+        profile.setPersistentCookiesPolicy(
+            QWebEngineProfile.PersistentCookiesPolicy.AllowPersistentCookies
+        )
+
+        self.loadFinished.connect(self._on_load_finished)
+
+    def _on_load_finished(self, ok: bool):
+        """Handle page load completion."""
+        if ok:
+            self.pageLoaded.emit(self.platform)
+
+    def navigate(self, url: str):
+        """Navigate to a URL."""
+        self.setUrl(QUrl(url))
+
+    def execute_js(self, script: str, callback=None):
+        """Execute JavaScript on the page."""
+        if callback:
+            self.page().runJavaScript(script, callback)
+        else:
+            self.page().runJavaScript(script)
+
+    def fill_input_and_send(self, text: str, callback=None):
+        """Fill input field and send query based on platform."""
+        escaped_text = text.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
+
+        if self.platform == "gemini":
+            script = f"""
+            (function() {{
+                const textarea = document.querySelector('div[contenteditable="true"], rich-textarea textarea, textarea');
+                if (textarea) {{
+                    if (textarea.tagName === 'TEXTAREA') {{
+                        textarea.value = `{escaped_text}`;
+                        textarea.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    }} else {{
+                        textarea.innerText = `{escaped_text}`;
+                        textarea.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    }}
+                    setTimeout(() => {{
+                        const sendBtn = document.querySelector('button[aria-label="Send message"], button.send-button, button[mattooltip="Send message"]');
+                        if (sendBtn) sendBtn.click();
+                    }}, 500);
+                    return 'sent';
+                }}
+                return 'input not found';
+            }})();
+            """
+        elif self.platform == "perplexity":
+            script = f"""
+            (function() {{
+                const textarea = document.querySelector('textarea[placeholder="Ask anything..."], textarea[placeholder="Ask follow-up..."], textarea');
+                if (textarea) {{
+                    textarea.value = `{escaped_text}`;
+                    textarea.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    setTimeout(() => {{
+                        const sendBtn = document.querySelector('button[aria-label="Submit"], button[type="submit"]');
+                        if (sendBtn) sendBtn.click();
+                    }}, 500);
+                    return 'sent';
+                }}
+                return 'input not found';
+            }})();
+            """
+        elif self.platform == "chatgpt":
+            script = f"""
+            (function() {{
+                const textarea = document.querySelector('textarea[id="prompt-textarea"], div[contenteditable="true"][id="prompt-textarea"], textarea');
+                if (textarea) {{
+                    if (textarea.tagName === 'TEXTAREA') {{
+                        textarea.value = `{escaped_text}`;
+                    }} else {{
+                        textarea.innerText = `{escaped_text}`;
+                    }}
+                    textarea.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    setTimeout(() => {{
+                        const sendBtn = document.querySelector('button[data-testid="send-button"], button[aria-label="Send prompt"]');
+                        if (sendBtn && !sendBtn.disabled) sendBtn.click();
+                    }}, 500);
+                    return 'sent';
+                }}
+                return 'input not found';
+            }})();
+            """
+        else:
+            script = "return 'unknown platform';"
+
+        if callback:
+            self.execute_js(script, callback)
+        else:
+            self.execute_js(script)
+
+    def get_response_text(self, callback):
+        """Extract response text from the page."""
+        if self.platform == "gemini":
+            script = """
+            (function() {
+                const responses = document.querySelectorAll('message-content, div[class*="response"], div.model-response');
+                if (responses.length > 0) {
+                    const last = responses[responses.length - 1];
+                    return last.innerText || last.textContent || '';
+                }
+                return '';
+            })();
+            """
+        elif self.platform == "perplexity":
+            script = """
+            (function() {
+                const responses = document.querySelectorAll('div.prose, div[class*="answer"], div[data-testid="response-container"]');
+                if (responses.length > 0) {
+                    const last = responses[responses.length - 1];
+                    return last.innerText || last.textContent || '';
+                }
+                return '';
+            })();
+            """
+        elif self.platform == "chatgpt":
+            script = """
+            (function() {
+                const responses = document.querySelectorAll('div[data-message-author-role="assistant"], div.agent-turn div[class*="markdown"]');
+                if (responses.length > 0) {
+                    const last = responses[responses.length - 1];
+                    return last.innerText || last.textContent || '';
+                }
+                return '';
+            })();
+            """
+        else:
+            script = "return '';"
+
+        self.execute_js(script, callback)
+
+
+class PlatformTab(QWidget):
+    """Tab containing an embedded browser for a platform."""
 
     def __init__(self, platform: str, url: str, parent=None):
         super().__init__(parent)
         self.platform = platform
         self.url = url
+        self.browser: Optional[PlatformBrowser] = None
 
         self._setup_ui()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         header = QFrame()
         header.setStyleSheet("""
@@ -42,92 +190,55 @@ class PlatformTab(QWidget):
             }
         """)
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(12, 8, 12, 8)
+        header_layout.setContentsMargins(12, 6, 12, 6)
 
-        self.status_label = QLabel("Not connected")
+        self.status_label = QLabel("Loading...")
         self.status_label.setStyleSheet("color: #666; font-size: 12px;")
         header_layout.addWidget(self.status_label)
 
         header_layout.addStretch()
 
-        self.url_label = QLabel(self.url)
-        self.url_label.setStyleSheet("color: #999; font-size: 11px;")
-        header_layout.addWidget(self.url_label)
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #E0E0E0;
+                border: none;
+                border-radius: 4px;
+                padding: 4px 12px;
+                color: #333;
+            }
+            QPushButton:hover {
+                background-color: #BDBDBD;
+            }
+        """)
+        refresh_btn.clicked.connect(self._refresh_browser)
+        header_layout.addWidget(refresh_btn)
 
         layout.addWidget(header)
 
-        content = QFrame()
-        content.setStyleSheet("background-color: #FAFAFA;")
-        content_layout = QVBoxLayout(content)
-        content_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.browser = PlatformBrowser(self.platform)
+        self.browser.pageLoaded.connect(self._on_page_loaded)
+        layout.addWidget(self.browser, 1)
 
-        icon_label = QLabel(self._get_platform_icon())
-        icon_label.setStyleSheet("font-size: 48px;")
-        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        content_layout.addWidget(icon_label)
+        self.browser.navigate(self.url)
 
-        title_label = QLabel(self.platform.title())
-        title_label.setStyleSheet("font-size: 24px; font-weight: bold; color: #333;")
-        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        content_layout.addWidget(title_label)
+    def _refresh_browser(self):
+        """Refresh the browser."""
+        if self.browser:
+            self.browser.reload()
 
-        desc_label = QLabel(
-            f"Click the button below to open {self.platform.title()} in a browser window.\n"
-            "Log in to your account, then return here to run queries."
-        )
-        desc_label.setStyleSheet("color: #666; font-size: 13px; margin: 16px;")
-        desc_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        desc_label.setWordWrap(True)
-        content_layout.addWidget(desc_label)
+    def _on_page_loaded(self, platform: str):
+        """Handle page load."""
+        self.status_label.setText("Ready")
+        self.status_label.setStyleSheet("color: #4CAF50; font-weight: bold; font-size: 12px;")
 
-        self.launch_btn = QPushButton(f"Open {self.platform.title()} Browser")
-        self.launch_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #2196F3;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 12px 24px;
-                font-size: 14px;
-                font-weight: bold;
-                min-width: 200px;
-            }
-            QPushButton:hover {
-                background-color: #1976D2;
-            }
-            QPushButton:pressed {
-                background-color: #1565C0;
-            }
-        """)
-        self.launch_btn.clicked.connect(lambda: self.launchRequested.emit(self.platform))
-        content_layout.addWidget(self.launch_btn, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        self.info_label = QLabel("")
-        self.info_label.setStyleSheet("color: #4CAF50; font-size: 12px; margin-top: 12px;")
-        self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        content_layout.addWidget(self.info_label)
-
-        layout.addWidget(content, 1)
-
-    def _get_platform_icon(self) -> str:
-        icons = {
-            "gemini": "G",
-            "perplexity": "P",
-            "chatgpt": "C"
-        }
-        return icons.get(self.platform, "?")
-
-    def set_status(self, status: str, is_logged_in: bool = False):
+    def set_status(self, status: str, is_ready: bool = False):
         """Update the status label."""
-        if is_logged_in:
-            self.status_label.setText(f"{status} - Logged in")
+        self.status_label.setText(status)
+        if is_ready:
             self.status_label.setStyleSheet("color: #4CAF50; font-weight: bold; font-size: 12px;")
-            self.info_label.setText("Browser is open and ready")
-            self.launch_btn.setText(f"Reopen {self.platform.title()} Browser")
         else:
-            self.status_label.setText(status)
             self.status_label.setStyleSheet("color: #FF9800; font-size: 12px;")
-            self.info_label.setText("")
 
 
 class TerminalTab(QWidget):
@@ -142,8 +253,9 @@ class TerminalTab(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         header = QFrame()
-        header.setStyleSheet("background-color: #263238; padding: 8px;")
+        header.setStyleSheet("background-color: #263238;")
         header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(12, 8, 12, 8)
 
         title = QLabel("Terminal / Logs")
         title.setStyleSheet("color: white; font-weight: bold;")
@@ -158,6 +270,7 @@ class TerminalTab(QWidget):
                 color: white;
                 border-radius: 4px;
                 padding: 4px 12px;
+                border: none;
             }
             QPushButton:hover {
                 background-color: #546E7A;
@@ -185,15 +298,6 @@ class TerminalTab(QWidget):
     def append_log(self, message: str, level: str = "INFO"):
         """Append a log message."""
         timestamp = datetime.now().strftime("%H:%M:%S")
-
-        colors = {
-            "INFO": "#9CDCFE",
-            "WARNING": "#DCDCAA",
-            "ERROR": "#F48771",
-            "SUCCESS": "#4EC9B0"
-        }
-        color = colors.get(level.upper(), "#D4D4D4")
-
         formatted = f"[{timestamp}] [{level}] {message}"
         self.log_output.appendPlainText(formatted)
 
@@ -206,14 +310,12 @@ class TerminalTab(QWidget):
 
 
 class BrowserTabs(QWidget):
-    """Tabbed widget containing browser views and terminal."""
-
-    launchBrowserRequested = pyqtSignal(str)
+    """Tabbed widget containing embedded browser views and terminal."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.platform_tabs: Dict[str, PlatformTab] = {}
-        self.terminal_tab = None
+        self.terminal_tab: Optional[TerminalTab] = None
 
         self._setup_ui()
 
@@ -246,7 +348,7 @@ class BrowserTabs(QWidget):
             }
         """)
 
-        platform_icons = {
+        platform_names = {
             "gemini": "Gemini",
             "perplexity": "Perplexity",
             "chatgpt": "ChatGPT"
@@ -254,28 +356,29 @@ class BrowserTabs(QWidget):
 
         for platform, url in PLATFORMS.items():
             tab = PlatformTab(platform, url)
-            tab.launchRequested.connect(self._on_launch_requested)
             self.platform_tabs[platform] = tab
-            self.tabs.addTab(tab, platform_icons.get(platform, platform.title()))
+            self.tabs.addTab(tab, platform_names.get(platform, platform.title()))
 
         self.terminal_tab = TerminalTab()
         self.tabs.addTab(self.terminal_tab, "Terminal")
 
         layout.addWidget(self.tabs)
 
-    def _on_launch_requested(self, platform: str):
-        """Handle browser launch request from platform tab."""
-        self.launchBrowserRequested.emit(platform)
+    def get_browser(self, platform: str) -> Optional[PlatformBrowser]:
+        """Get the browser for a platform."""
+        if platform in self.platform_tabs:
+            return self.platform_tabs[platform].browser
+        return None
 
     def append_log(self, message: str, level: str = "INFO"):
         """Append a log message to the terminal."""
         if self.terminal_tab:
             self.terminal_tab.append_log(message, level)
 
-    def set_platform_status(self, platform: str, status: str, is_logged_in: bool = False):
+    def set_platform_status(self, platform: str, status: str, is_ready: bool = False):
         """Set the status for a platform tab."""
         if platform in self.platform_tabs:
-            self.platform_tabs[platform].set_status(status, is_logged_in)
+            self.platform_tabs[platform].set_status(status, is_ready)
 
     def show_platform_tab(self, platform: str):
         """Switch to a specific platform tab."""
