@@ -281,7 +281,7 @@ class PlatformBrowser(QWebEngineView):
                            .replace("\r", "\\r")
                            .replace("</script>", "<\\/script>"))
 
-        # Step 1: Fill the input
+        # Step 1: Fill the input using a more React-compatible approach
         fill_script = f"""
         (function() {{
             try {{
@@ -330,56 +330,60 @@ class PlatformBrowser(QWebEngineView):
                     return 'input not found. Found: ' + info.join(', ');
                 }}
 
-                // Focus and click the input
+                const text = '{escaped_text}';
+
+                // Focus the textarea first - this is critical for React
                 textarea.focus();
                 textarea.click();
 
-                const text = '{escaped_text}';
-
-                // Clear existing content first - be more aggressive
+                // For React apps, we need to simulate typing more realistically
                 if (textarea.tagName === 'TEXTAREA' || textarea.tagName === 'INPUT') {{
-                    // Clear using native setter first
-                    const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(
-                        window.HTMLTextAreaElement.prototype, 'value'
-                    ).set;
-                    nativeTextAreaValueSetter.call(textarea, '');
+                    // Clear the textarea first
                     textarea.select();
-                }} else {{
-                    // For contenteditable, clear innerHTML
-                    textarea.textContent = '';
-                }}
-                
-                // Double-check clear with execCommand
-                document.execCommand('selectAll', false, null);
-                document.execCommand('delete', false, null);
+                    document.execCommand('delete', false, null);
 
-                // Set the value - use only ONE method to avoid duplication
-                if (textarea.tagName === 'TEXTAREA' || textarea.tagName === 'INPUT') {{
-                    // For textarea/input, use native setter (most reliable)
-                    const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(
-                        window.HTMLTextAreaElement.prototype, 'value'
-                    ).set;
-                    nativeTextAreaValueSetter.call(textarea, text);
+                    // Use execCommand insertText which works better with React
+                    // This triggers React's onChange handlers properly
+                    const success = document.execCommand('insertText', false, text);
 
-                    // Dispatch React-compatible events
-                    const inputEvent = new Event('input', {{ bubbles: true, cancelable: true }});
-                    Object.defineProperty(inputEvent, 'target', {{ value: textarea }});
-                    textarea.dispatchEvent(inputEvent);
-                    textarea.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    if (!success || textarea.value.length < text.length / 2) {{
+                        // Fallback to native setter if execCommand fails
+                        console.log('Perplexity: execCommand failed, using native setter');
+                        const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(
+                            window.HTMLTextAreaElement.prototype, 'value'
+                        ).set;
+                        nativeTextAreaValueSetter.call(textarea, text);
+
+                        // Dispatch React-compatible events
+                        const inputEvent = new Event('input', {{ bubbles: true, cancelable: true }});
+                        Object.defineProperty(inputEvent, 'target', {{ value: textarea }});
+                        textarea.dispatchEvent(inputEvent);
+                        textarea.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    }}
                 }} else {{
-                    // For contenteditable divs, use execCommand
+                    // For contenteditable divs
+                    textarea.focus();
+                    document.execCommand('selectAll', false, null);
+                    document.execCommand('delete', false, null);
                     document.execCommand('insertText', false, text);
-                    
-                    // Trigger input events
-                    textarea.dispatchEvent(new InputEvent('input', {{
-                        bubbles: true,
-                        cancelable: true,
-                        inputType: 'insertText',
-                        data: text
-                    }}));
+
+                    if (!textarea.textContent || textarea.textContent.length < text.length / 2) {{
+                        textarea.textContent = text;
+                        textarea.dispatchEvent(new InputEvent('input', {{
+                            bubbles: true,
+                            cancelable: true,
+                            inputType: 'insertText',
+                            data: text
+                        }}));
+                    }}
                 }}
 
+                console.log('Perplexity: Set text length:', textarea.value ? textarea.value.length : (textarea.textContent ? textarea.textContent.length : 0), 'Expected:', text.length);
+
+                // Store reference and also store the form if available
                 window._perplexityTextarea = textarea;
+                window._perplexityForm = textarea.closest('form');
+
                 return 'filled';
             }} catch (error) {{
                 console.error('Perplexity fill error:', error);
@@ -396,91 +400,141 @@ class PlatformBrowser(QWebEngineView):
                 if callback:
                     callback(result)
                 return
-            
+
             # Step 2: Wait a bit, then click send
             def click_send():
                 send_script = """
                 (function() {
                     try {
                         const textarea = window._perplexityTextarea;
+                        const form = window._perplexityForm;
+
                         if (!textarea) {
                             return 'no textarea';
                         }
 
                         console.log('Perplexity: Textarea value length:', textarea.value ? textarea.value.length : 0);
 
+                        // Ensure textarea is focused
+                        textarea.focus();
+
+                        // First try to find and click the send button directly
+                        // Look for button with arrow/send icon near the textarea
                         const sendSelectors = [
                             'button[aria-label*="Submit"]',
-                            'button[aria-label*="submit"]',
+                            'button[aria-label*="send"]',
                             'button[aria-label*="Send"]',
                             'button[type="submit"]',
-                            'button[class*="bg-super"]',
-                            'button[class*="submit"]',
-                            'button[class*="send"]'
+                            'button[class*="submit"]'
                         ];
 
                         let sendBtn = null;
-                        for (const sel of sendSelectors) {
-                            const btn = document.querySelector(sel);
-                            if (btn && !btn.disabled && btn.offsetParent !== null) {
-                                sendBtn = btn;
-                                console.log('Perplexity: Found send button with selector:', sel);
-                                break;
-                            }
-                        }
 
-                        if (!sendBtn) {
-                            const form = textarea.closest('form');
-                            if (form) {
-                                sendBtn = form.querySelector('button[type="submit"], button:last-of-type');
-                                if (sendBtn) console.log('Perplexity: Found send button in form');
-                            }
-                        }
-
-                        if (!sendBtn) {
-                            const parent = textarea.parentElement?.parentElement;
-                            if (parent) {
-                                const buttons = parent.querySelectorAll('button');
-                                for (const btn of buttons) {
-                                    if (!btn.disabled && btn.offsetParent !== null) {
-                                        sendBtn = btn;
-                                        console.log('Perplexity: Found send button in parent');
-                                        break;
-                                    }
+                        // Try to find button by looking at parent form or container
+                        if (form) {
+                            // Look for submit button in form
+                            const buttons = form.querySelectorAll('button');
+                            for (const btn of buttons) {
+                                // Skip if it's clearly not a send button
+                                if (btn.disabled) continue;
+                                // Check if button has arrow icon or is positioned to the right
+                                const rect = btn.getBoundingClientRect();
+                                const textareaRect = textarea.getBoundingClientRect();
+                                if (rect.right > textareaRect.right - 100 && rect.bottom > textareaRect.top) {
+                                    sendBtn = btn;
+                                    console.log('Perplexity: Found send button in form by position');
+                                    break;
                                 }
                             }
                         }
 
+                        // If not found, try direct selectors
+                        if (!sendBtn) {
+                            for (const sel of sendSelectors) {
+                                const btn = document.querySelector(sel);
+                                if (btn && !btn.disabled && btn.offsetParent !== null) {
+                                    sendBtn = btn;
+                                    console.log('Perplexity: Found send button with selector:', sel);
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Method 1: Try clicking the send button
                         if (sendBtn) {
                             console.log('Perplexity: Clicking send button');
                             sendBtn.click();
-                            return 'sent';
-                        } else {
-                            console.log('Perplexity: No button found, trying Enter key');
-                            textarea.dispatchEvent(new KeyboardEvent('keydown', {
-                                key: 'Enter',
-                                code: 'Enter',
-                                keyCode: 13,
-                                which: 13,
+                            return 'sent via button';
+                        }
+
+                        // Method 2: Try form.requestSubmit() which simulates form submission
+                        if (form && typeof form.requestSubmit === 'function') {
+                            try {
+                                form.requestSubmit();
+                                console.log('Perplexity: Used form.requestSubmit()');
+                                return 'sent via form submit';
+                            } catch (e) {
+                                console.log('Perplexity: form.requestSubmit failed:', e);
+                            }
+                        }
+
+                        // Method 3: Create a submit event
+                        if (form) {
+                            const submitEvent = new Event('submit', {
                                 bubbles: true,
                                 cancelable: true
-                            }));
-                            return 'sent via enter';
+                            });
+                            const dispatched = form.dispatchEvent(submitEvent);
+                            if (dispatched) {
+                                console.log('Perplexity: Dispatched submit event');
+                                return 'sent via submit event';
+                            }
                         }
+
+                        // Method 4: Fallback to Enter key
+                        console.log('Perplexity: Using Enter key to send');
+
+                        // Create and dispatch keyboard events
+                        const enterEvent = new KeyboardEvent('keydown', {
+                            key: 'Enter',
+                            code: 'Enter',
+                            keyCode: 13,
+                            which: 13,
+                            bubbles: true,
+                            cancelable: true,
+                            composed: true,
+                            view: window
+                        });
+
+                        textarea.dispatchEvent(enterEvent);
+
+                        // Also dispatch keyup
+                        textarea.dispatchEvent(new KeyboardEvent('keyup', {
+                            key: 'Enter',
+                            code: 'Enter',
+                            keyCode: 13,
+                            which: 13,
+                            bubbles: true,
+                            cancelable: true,
+                            composed: true,
+                            view: window
+                        }));
+
+                        return 'sent via enter';
                     } catch (e) {
                         console.error('Perplexity send error:', e);
                         return 'error: ' + e.message;
                     }
                 })();
                 """
-                
+
                 def on_send_result(result):
                     print(f"Perplexity send result: {result}")
                     if callback:
                         callback(result if result else 'sent')
-                
+
                 self.execute_js(send_script, on_send_result)
-            
+
             QTimer.singleShot(800, click_send)
 
         self.execute_js(fill_script, on_fill_result)
@@ -491,120 +545,156 @@ class PlatformBrowser(QWebEngineView):
         escaped_text = (text.replace("\\", "\\\\")
                            .replace("'", "\\'")
                            .replace("\n", "\\n")
-                           .replace("\r", "\\r"))
+                           .replace("\r", "\\r")
+                           .replace("</script>", "<\\/script>"))
 
-        script = f"""
+        # Step 1: Fill the input
+        fill_script = f"""
         (function() {{
-            // ChatGPT now uses contenteditable div with id prompt-textarea
-            const selectors = [
-                '#prompt-textarea',
-                'div[id="prompt-textarea"]',
-                'div[contenteditable="true"][data-id="root"]',
-                'div[contenteditable="true"][role="textbox"]',
-                'textarea[id="prompt-textarea"]',
-                'textarea[placeholder*="Message"]',
-                'textarea[data-id="root"]'
-            ];
+            try {{
+                // ChatGPT now uses contenteditable div with id prompt-textarea
+                const selectors = [
+                    '#prompt-textarea',
+                    'div[id="prompt-textarea"]',
+                    'div[contenteditable="true"][data-id="root"]',
+                    'div[contenteditable="true"][role="textbox"]',
+                    'textarea[id="prompt-textarea"]',
+                    'textarea[placeholder*="Message"]',
+                    'textarea[data-id="root"]'
+                ];
 
-            let input = null;
-            for (const sel of selectors) {{
-                const el = document.querySelector(sel);
-                if (el && el.offsetParent !== null) {{
-                    input = el;
-                    console.log('ChatGPT: Found input with selector:', sel);
-                    break;
+                let input = null;
+                for (const sel of selectors) {{
+                    const el = document.querySelector(sel);
+                    if (el && el.offsetParent !== null) {{
+                        input = el;
+                        console.log('ChatGPT: Found input with selector:', sel);
+                        break;
+                    }}
                 }}
-            }}
 
-            if (!input) {{
-                return 'input not found';
-            }}
+                if (!input) {{
+                    return 'input not found';
+                }}
 
-            // Focus the element
-            input.focus();
-            input.click();
-
-            const text = '{escaped_text}';
-
-            if (input.tagName === 'TEXTAREA') {{
-                // For textarea
-                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-                    window.HTMLTextAreaElement.prototype, 'value'
-                ).set;
-                nativeInputValueSetter.call(input, text);
-                input.dispatchEvent(new Event('input', {{ bubbles: true }}));
-            }} else {{
-                // For contenteditable div (newer ChatGPT UI)
-                input.innerHTML = '';
+                // Focus the element
                 input.focus();
+                input.click();
 
-                // Use execCommand for better compatibility
-                document.execCommand('insertText', false, text);
+                const text = '{escaped_text}';
 
-                // If that didn't work, set innerHTML directly
-                if (!input.textContent || input.textContent.length < 10) {{
-                    // Create paragraph element for proper formatting
-                    const p = document.createElement('p');
-                    p.textContent = text;
+                if (input.tagName === 'TEXTAREA') {{
+                    // For textarea
+                    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                        window.HTMLTextAreaElement.prototype, 'value'
+                    ).set;
+                    nativeInputValueSetter.call(input, text);
+                    input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                }} else {{
+                    // For contenteditable div (newer ChatGPT UI)
                     input.innerHTML = '';
-                    input.appendChild(p);
+                    input.focus();
 
-                    // Dispatch input event
-                    input.dispatchEvent(new InputEvent('input', {{
-                        bubbles: true,
-                        cancelable: true,
-                        inputType: 'insertText',
-                        data: text
-                    }}));
-                }}
-            }}
+                    // Use execCommand for better compatibility
+                    document.execCommand('insertText', false, text);
 
-            // Wait and click send
-            return new Promise((resolve) => {{
-                setTimeout(() => {{
-                    const sendSelectors = [
-                        'button[data-testid="send-button"]',
-                        'button[aria-label*="Send message"]',
-                        'button[aria-label*="Send prompt"]',
-                        'button[aria-label*="Send"]',
-                        'form button[type="submit"]'
-                    ];
+                    // If that didn't work, set innerHTML directly
+                    if (!input.textContent || input.textContent.length < 10) {{
+                        // Create paragraph element for proper formatting
+                        const p = document.createElement('p');
+                        p.textContent = text;
+                        input.innerHTML = '';
+                        input.appendChild(p);
 
-                    let sendBtn = null;
-                    for (const sel of sendSelectors) {{
-                        const btn = document.querySelector(sel);
-                        if (btn && !btn.disabled && btn.offsetParent !== null) {{
-                            sendBtn = btn;
-                            break;
-                        }}
-                    }}
-
-                    if (sendBtn) {{
-                        console.log('ChatGPT: Clicking send button');
-                        sendBtn.click();
-                        resolve('sent');
-                    }} else {{
-                        // Try Ctrl+Enter or just Enter
-                        input.dispatchEvent(new KeyboardEvent('keydown', {{
-                            key: 'Enter',
-                            code: 'Enter',
-                            keyCode: 13,
-                            which: 13,
-                            ctrlKey: false,
+                        // Dispatch input event
+                        input.dispatchEvent(new InputEvent('input', {{
                             bubbles: true,
-                            cancelable: true
+                            cancelable: true,
+                            inputType: 'insertText',
+                            data: text
                         }}));
-                        resolve('sent via enter');
                     }}
-                }}, 500);
-            }});
+                }}
+
+                window._chatgptInput = input;
+                console.log('ChatGPT: Filled text length:', input.textContent ? input.textContent.length : (input.value ? input.value.length : 0));
+                return 'filled';
+            }} catch (error) {{
+                console.error('ChatGPT fill error:', error);
+                return 'error: ' + error.message;
+            }}
         }})();
         """
 
-        if callback:
-            self.execute_js(script, callback)
-        else:
-            self.execute_js(script)
+        def on_fill_result(result):
+            print(f"ChatGPT fill result: {result}")
+            if result and result != 'filled':
+                if callback:
+                    callback(result)
+                return
+
+            # Step 2: Wait a bit, then click send
+            def click_send():
+                send_script = """
+                (function() {
+                    try {
+                        const input = window._chatgptInput;
+                        if (!input) {
+                            return 'no input';
+                        }
+
+                        const sendSelectors = [
+                            'button[data-testid="send-button"]',
+                            'button[aria-label*="Send message"]',
+                            'button[aria-label*="Send prompt"]',
+                            'button[aria-label*="Send"]',
+                            'form button[type="submit"]'
+                        ];
+
+                        let sendBtn = null;
+                        for (const sel of sendSelectors) {
+                            const btn = document.querySelector(sel);
+                            if (btn && !btn.disabled && btn.offsetParent !== null) {
+                                sendBtn = btn;
+                                console.log('ChatGPT: Found send button with selector:', sel);
+                                break;
+                            }
+                        }
+
+                        if (sendBtn) {
+                            console.log('ChatGPT: Clicking send button');
+                            sendBtn.click();
+                            return 'sent';
+                        } else {
+                            // Try Enter key
+                            console.log('ChatGPT: No button found, trying Enter key');
+                            input.dispatchEvent(new KeyboardEvent('keydown', {
+                                key: 'Enter',
+                                code: 'Enter',
+                                keyCode: 13,
+                                which: 13,
+                                bubbles: true,
+                                cancelable: true
+                            }));
+                            return 'sent via enter';
+                        }
+                    } catch (e) {
+                        console.error('ChatGPT send error:', e);
+                        return 'error: ' + e.message;
+                    }
+                })();
+                """
+
+                def on_send_result(result):
+                    print(f"ChatGPT send result: {result}")
+                    if callback:
+                        callback(result if result else 'sent')
+
+                self.execute_js(send_script, on_send_result)
+
+            QTimer.singleShot(500, click_send)
+
+        self.execute_js(fill_script, on_fill_result)
 
     def get_response_text(self, callback):
         """Extract response text from the page."""
@@ -792,6 +882,55 @@ class PlatformBrowser(QWebEngineView):
             script = "return false;"
 
         self.execute_js(script, callback)
+
+    def navigate_to_new_chat(self, callback=None):
+        """Navigate to a new chat page for the platform."""
+        new_chat_scripts = {
+            "gemini": """
+                (function() {
+                    // Try to click "New chat" button if available
+                    const newChatBtn = document.querySelector('button[aria-label*="New chat"], a[href*="new"]');
+                    if (newChatBtn) {
+                        newChatBtn.click();
+                        return 'clicked new chat button';
+                    }
+                    return 'no button found';
+                })();
+            """,
+            "perplexity": """
+                (function() {
+                    // Try to click "New Thread" or navigate to home
+                    const newBtn = document.querySelector('a[href="/"], button[aria-label*="New"]');
+                    if (newBtn) {
+                        newBtn.click();
+                        return 'clicked new button';
+                    }
+                    // Navigate to home page
+                    window.location.href = 'https://www.perplexity.ai/';
+                    return 'navigated to home';
+                })();
+            """,
+            "chatgpt": """
+                (function() {
+                    // Try to click "New chat" button
+                    const newChatBtn = document.querySelector('nav a[href="/"], button[data-testid*="new"]');
+                    if (newChatBtn) {
+                        newChatBtn.click();
+                        return 'clicked new chat button';
+                    }
+                    return 'no button found';
+                })();
+            """
+        }
+
+        if self.platform in new_chat_scripts:
+            def on_result(result):
+                print(f"{self.platform}: New chat result: {result}")
+                if callback:
+                    callback(result)
+            self.execute_js(new_chat_scripts[self.platform], on_result)
+        elif callback:
+            callback("unknown platform")
 
     def debug_page_elements(self, callback):
         """Debug helper to see what elements are available on the page."""

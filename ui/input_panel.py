@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -188,9 +188,24 @@ class InputPanel(QWidget):
 
         controls_layout.addStretch()
 
+        # Status and timer section
+        status_container = QHBoxLayout()
+        status_container.setSpacing(8)
+
         self.status_label = QLabel("Ready")
         self.status_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
-        controls_layout.addWidget(self.status_label)
+        status_container.addWidget(self.status_label)
+
+        self.timer_label = QLabel("")
+        self.timer_label.setStyleSheet("color: #666; font-size: 12px;")
+        status_container.addWidget(self.timer_label)
+
+        controls_layout.addLayout(status_container)
+
+        # Setup elapsed timer
+        self._elapsed_seconds = 0
+        self._elapsed_timer = QTimer(self)
+        self._elapsed_timer.timeout.connect(self._update_elapsed_time)
 
         layout.addLayout(controls_layout)
 
@@ -396,3 +411,30 @@ class InputPanel(QWidget):
 
         self.file_chips.clear()
         self._update_file_count()
+
+    def start_timer(self):
+        """Start the elapsed time timer."""
+        self._elapsed_seconds = 0
+        self.timer_label.setText("(0s)")
+        self._elapsed_timer.start(1000)
+
+    def stop_timer(self):
+        """Stop the elapsed time timer."""
+        self._elapsed_timer.stop()
+        # Keep showing the final time
+
+    def reset_timer(self):
+        """Reset and hide the timer."""
+        self._elapsed_timer.stop()
+        self._elapsed_seconds = 0
+        self.timer_label.setText("")
+
+    def _update_elapsed_time(self):
+        """Update the elapsed time display."""
+        self._elapsed_seconds += 1
+        if self._elapsed_seconds < 60:
+            self.timer_label.setText(f"({self._elapsed_seconds}s)")
+        else:
+            minutes = self._elapsed_seconds // 60
+            seconds = self._elapsed_seconds % 60
+            self.timer_label.setText(f"({minutes}m {seconds}s)")

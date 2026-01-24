@@ -60,7 +60,7 @@ class ResearchController(QObject):
         self.response_check_timer = QTimer()
         self.response_check_timer.timeout.connect(self._check_for_response)
         self.response_check_count = 0
-        self.max_response_checks = 7  # 15 seconds max wait (7 checks * 2 seconds + 1 second initial)
+        self.max_response_checks = 30  # 60 seconds max wait per platform (30 checks * 2 seconds)
         self.last_response_length = 0
         self.stable_response_count = 0  # Count how many times response stayed same length
 
@@ -117,12 +117,54 @@ class ResearchController(QObject):
 
         system_prompt = TaskAnalyzer.build_system_prompt(platform, self.current_query.task.value)
         combined_prompt = f"{system_prompt}\n\n{self.full_prompt}"
-        
+
         # Debug: log what's being sent
         self.statusUpdate.emit(f"Debug: Sending to {platform}, prompt length: {len(combined_prompt)}")
         print(f"Debug {platform}: system_prompt length: {len(system_prompt)}, full_prompt length: {len(self.full_prompt)}, combined length: {len(combined_prompt)}")
 
-        browser.fill_input_and_send(combined_prompt, self._on_query_sent)
+        # Store the prompt for potential retry
+        self._current_combined_prompt = combined_prompt
+        self._send_retry_count = 0
+
+        # Check if page is ready before sending
+        self._check_page_ready_and_send(browser, platform, combined_prompt)
+
+    def _check_page_ready_and_send(self, browser, platform, combined_prompt):
+        """Check if the page is ready and then send the query."""
+        check_script = """
+        (function() {
+            // Check if there's an input element ready
+            const selectors = [
+                'textarea',
+                'div[contenteditable="true"]',
+                '#prompt-textarea'
+            ];
+
+            for (const sel of selectors) {
+                const el = document.querySelector(sel);
+                if (el && el.offsetParent !== null) {
+                    return 'ready';
+                }
+            }
+            return 'not ready';
+        })();
+        """
+
+        def on_check_result(result):
+            if result == 'ready':
+                browser.fill_input_and_send(combined_prompt, self._on_query_sent)
+            else:
+                self._send_retry_count += 1
+                if self._send_retry_count < 5:
+                    # Wait and retry
+                    self.statusUpdate.emit(f"Waiting for {platform} page to be ready...")
+                    QTimer.singleShot(1000, lambda: self._check_page_ready_and_send(browser, platform, combined_prompt))
+                else:
+                    # Give up and try anyway
+                    self.statusUpdate.emit(f"Page may not be ready, attempting to send to {platform}...")
+                    browser.fill_input_and_send(combined_prompt, self._on_query_sent)
+
+        browser.execute_js(check_script, on_check_result)
 
     def _on_query_sent(self, result):
         """Handle query sent callback."""
@@ -140,6 +182,7 @@ class ResearchController(QObject):
             self.last_response_length = 0
             self.stable_response_count = 0
             # Wait a bit before starting to check for response
+            self.response_check_count = 0  # Reset counter for new platform
             QTimer.singleShot(3000, lambda: self.response_check_timer.start(2000))
         else:
             error_msg = f"Failed to send query to {platform}"
@@ -214,8 +257,17 @@ class ResearchController(QObject):
                     self.statusUpdate.emit(f"Waiting for {platform} response... ({current_length} chars so far)")
         
         # If we get here and no response yet, continue checking
-        if current_length == 0 and self.response_check_count % 10 == 0:
-            self.statusUpdate.emit(f"Still waiting for {platform} response... (check {self.response_check_count}/{self.max_response_checks})")
+        if current_length == 0:
+            if self.response_check_count % 10 == 0:
+                self.statusUpdate.emit(f"Still waiting for {platform} response... (check {self.response_check_count}/{self.max_response_checks})")
+            # Don't return - continue checking
+            return
+        
+        # If we have some response but it's not stable yet, continue checking
+        if current_length > 0 and current_length < 50:
+            if self.response_check_count % 5 == 0:
+                self.statusUpdate.emit(f"Waiting for {platform} to generate more... ({current_length} chars so far)")
+            return
 
     def _finish_queries(self):
         """Finish the query process and merge responses."""
@@ -399,6 +451,7 @@ class MainWindow(QMainWindow):
 
         self.input_panel.set_send_enabled(False)
         self.input_panel.set_status("Researching...", "#FF9800")
+        self.input_panel.start_timer()
 
         self.research_controller.start_query(user_query)
 
@@ -408,8 +461,22 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(message)
         self.browser_tabs.append_log(message, "INFO")
 
+        # Update input panel status with current platform
+        if message.startswith("Querying "):
+            platform = message.replace("Querying ", "").replace("...", "").strip()
+            self.input_panel.set_status(f"Querying {platform.title()}...", "#FF9800")
+        elif "waiting for" in message.lower():
+            # Extract platform name from waiting messages
+            parts = message.lower().split("waiting for")
+            if len(parts) > 1:
+                platform = parts[1].split()[0].strip()
+                self.input_panel.set_status(f"Waiting for {platform.title()}...", "#2196F3")
+        elif message == "Merging responses...":
+            self.input_panel.set_status("Merging...", "#9C27B0")
+
     def _on_research_complete(self, result: Optional[MergedResponse]):
         self.input_panel.set_send_enabled(True)
+        self.input_panel.stop_timer()
 
         if result:
             self.current_response = result
@@ -484,6 +551,8 @@ class MainWindow(QMainWindow):
             self.chat_widget.clear_chat()
             self.input_panel.clear_files()
             self.input_panel.set_export_enabled(False)
+            self.input_panel.reset_timer()
+            self.input_panel.set_status("Ready", "#4CAF50")
             self.browser_tabs.clear_logs()
 
             self.chat_widget.add_bot_message(
