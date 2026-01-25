@@ -9,7 +9,15 @@ from datetime import datetime
 from typing import List
 
 from config import DB_PATH
-from utils.models import MergedResponse, PlatformResponse, UserQuery
+from utils.models import (
+    CategoryType,
+    ColorLabel,
+    MergedResponse,
+    PlatformResponse,
+    PromptItem,
+    ResponseItem,
+    UserQuery,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +101,39 @@ class LocalStorage:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_queries_session ON queries(session_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_responses_query ON platform_responses(query_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_merged_query ON merged_responses(query_id)")
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS prompts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    category TEXT DEFAULT 'Uncategorized',
+                    color TEXT DEFAULT 'Purple',
+                    display_order INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS response_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    category TEXT DEFAULT 'Uncategorized',
+                    color TEXT DEFAULT 'Blue',
+                    platform TEXT,
+                    tab_id TEXT,
+                    content_hash TEXT NOT NULL UNIQUE,
+                    display_order INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_prompts_order ON prompts(display_order)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_response_items_order ON response_items(display_order)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_response_items_hash ON response_items(content_hash)")
 
             logger.info("Database initialized successfully")
 
@@ -248,3 +289,206 @@ class LocalStorage:
             cursor.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
 
         logger.info(f"Cleaned up session: {session_id}")
+
+    def save_prompt(self, prompt: PromptItem) -> int:
+        """Save a new prompt and return its ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT COALESCE(MAX(display_order), -1) + 1 FROM prompts
+            """)
+            next_order = cursor.fetchone()[0]
+
+            cursor.execute("""
+                INSERT INTO prompts (title, content, category, color, display_order, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                prompt.title,
+                prompt.content,
+                prompt.category.value,
+                prompt.color.value,
+                next_order,
+                prompt.created_at.isoformat(),
+                prompt.updated_at.isoformat()
+            ))
+            prompt_id = cursor.lastrowid
+
+        logger.info(f"Saved prompt: {prompt_id}")
+        return prompt_id
+
+    def update_prompt(self, prompt: PromptItem) -> bool:
+        """Update an existing prompt."""
+        if prompt.id is None:
+            return False
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE prompts
+                SET title = ?, content = ?, category = ?, color = ?, updated_at = ?
+                WHERE id = ?
+            """, (
+                prompt.title,
+                prompt.content,
+                prompt.category.value,
+                prompt.color.value,
+                datetime.now().isoformat(),
+                prompt.id
+            ))
+
+        logger.info(f"Updated prompt: {prompt.id}")
+        return True
+
+    def delete_prompt(self, prompt_id: int) -> bool:
+        """Delete a prompt by ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM prompts WHERE id = ?", (prompt_id,))
+
+        logger.info(f"Deleted prompt: {prompt_id}")
+        return True
+
+    def get_all_prompts(self) -> List[PromptItem]:
+        """Get all prompts ordered by display_order."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, title, content, category, color, display_order, created_at, updated_at
+                FROM prompts
+                ORDER BY display_order ASC
+            """)
+            rows = cursor.fetchall()
+
+        prompts = []
+        for row in rows:
+            prompts.append(PromptItem(
+                id=row["id"],
+                title=row["title"],
+                content=row["content"],
+                category=CategoryType(row["category"]),
+                color=ColorLabel(row["color"]),
+                display_order=row["display_order"],
+                created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else datetime.now(),
+                updated_at=datetime.fromisoformat(row["updated_at"]) if row["updated_at"] else datetime.now()
+            ))
+        return prompts
+
+    def update_prompt_order(self, prompt_id: int, new_order: int) -> bool:
+        """Update the display order of a prompt."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE prompts SET display_order = ?, updated_at = ?
+                WHERE id = ?
+            """, (new_order, datetime.now().isoformat(), prompt_id))
+
+        return True
+
+    def save_response_item(self, response: ResponseItem) -> int:
+        """Save a new response item and return its ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT COALESCE(MAX(display_order), -1) + 1 FROM response_items
+            """)
+            next_order = cursor.fetchone()[0]
+
+            cursor.execute("""
+                INSERT INTO response_items (title, content, category, color, platform, tab_id, content_hash, display_order, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                response.title,
+                response.content,
+                response.category.value,
+                response.color.value,
+                response.platform,
+                response.tab_id,
+                response.content_hash,
+                next_order,
+                response.created_at.isoformat(),
+                response.updated_at.isoformat()
+            ))
+            response_id = cursor.lastrowid
+
+        logger.info(f"Saved response item: {response_id}")
+        return response_id
+
+    def update_response_item(self, response: ResponseItem) -> bool:
+        """Update an existing response item."""
+        if response.id is None:
+            return False
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE response_items
+                SET title = ?, content = ?, category = ?, color = ?, updated_at = ?
+                WHERE id = ?
+            """, (
+                response.title,
+                response.content,
+                response.category.value,
+                response.color.value,
+                datetime.now().isoformat(),
+                response.id
+            ))
+
+        logger.info(f"Updated response item: {response.id}")
+        return True
+
+    def delete_response_item(self, response_id: int) -> bool:
+        """Delete a response item by ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM response_items WHERE id = ?", (response_id,))
+
+        logger.info(f"Deleted response item: {response_id}")
+        return True
+
+    def get_all_response_items(self) -> List[ResponseItem]:
+        """Get all response items ordered by display_order."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, title, content, category, color, platform, tab_id, content_hash, display_order, created_at, updated_at
+                FROM response_items
+                ORDER BY display_order ASC
+            """)
+            rows = cursor.fetchall()
+
+        responses = []
+        for row in rows:
+            responses.append(ResponseItem(
+                id=row["id"],
+                title=row["title"],
+                content=row["content"],
+                category=CategoryType(row["category"]),
+                color=ColorLabel(row["color"]),
+                platform=row["platform"],
+                tab_id=row["tab_id"],
+                content_hash=row["content_hash"],
+                display_order=row["display_order"],
+                created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else datetime.now(),
+                updated_at=datetime.fromisoformat(row["updated_at"]) if row["updated_at"] else datetime.now()
+            ))
+        return responses
+
+    def response_hash_exists(self, content_hash: str) -> bool:
+        """Check if a response with the given hash already exists."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT 1 FROM response_items WHERE content_hash = ? LIMIT 1
+            """, (content_hash,))
+            return cursor.fetchone() is not None
+
+    def update_response_order(self, response_id: int, new_order: int) -> bool:
+        """Update the display order of a response item."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE response_items SET display_order = ?, updated_at = ?
+                WHERE id = ?
+            """, (new_order, datetime.now().isoformat(), response_id))
+
+        return True

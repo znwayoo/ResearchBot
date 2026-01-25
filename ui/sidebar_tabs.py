@@ -1,15 +1,22 @@
 """Sidebar tabs widget with embedded browser views and logs."""
 
+import os
+import pty
+import platform as sys_platform
+import select
+import time
 from datetime import datetime
 from typing import Dict, Optional
 
-from PyQt6.QtCore import QUrl, pyqtSignal, QTimer
+from PyQt6.QtCore import QUrl, pyqtSignal, QTimer, QProcess, QSocketNotifier
+from PyQt6.QtGui import QTextCursor
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtWebEngineCore import QWebEngineProfile
+from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEnginePage
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QTabWidget,
@@ -17,7 +24,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from config import PLATFORMS
+from config import CONFIG_DIR, PLATFORMS
 
 
 class PlatformBrowser(QWebEngineView):
@@ -38,7 +45,6 @@ class PlatformBrowser(QWebEngineView):
     def get_shared_profile(cls):
         """Get or create shared profile with persistent storage."""
         if cls._shared_profile is None:
-            from config import CONFIG_DIR
             storage_path = str(CONFIG_DIR / "browser_data")
 
             cls._shared_profile = QWebEngineProfile("ResearchBot", None)
@@ -51,8 +57,6 @@ class PlatformBrowser(QWebEngineView):
 
     def _setup_browser(self):
         """Configure the browser with persistent storage."""
-        from PyQt6.QtWebEngineCore import QWebEnginePage
-
         profile = self.get_shared_profile()
         page = QWebEnginePage(profile, self)
         self.setPage(page)
@@ -99,7 +103,6 @@ class PlatformBrowser(QWebEngineView):
                            .replace("</script>", "<\\/script>"))
 
         # Use a unique ID for this operation
-        import time
         op_id = f"gemini_{int(time.time() * 1000)}"
         
         # Step 1: Fill the input
@@ -281,7 +284,7 @@ class PlatformBrowser(QWebEngineView):
                            .replace("\r", "\\r")
                            .replace("</script>", "<\\/script>"))
 
-        # Step 1: Fill the input using a more React-compatible approach
+        # Step 1: Fill the input
         fill_script = f"""
         (function() {{
             try {{
@@ -316,74 +319,46 @@ class PlatformBrowser(QWebEngineView):
                 }}
 
                 if (!textarea) {{
-                    // Try to find any visible textarea or contenteditable
-                    const allTextareas = document.querySelectorAll('textarea, div[contenteditable="true"]');
-                    const info = [];
-                    allTextareas.forEach((t, idx) => {{
-                        if (idx < 5) {{
-                            const visible = t.offsetParent !== null;
-                            const placeholder = t.placeholder || t.getAttribute('placeholder') || 'no-ph';
-                            const role = t.getAttribute('role') || 'no-role';
-                            info.push('el' + idx + ':' + t.tagName + ':ph=' + placeholder + ':role=' + role + ':visible=' + visible);
-                        }}
-                    }});
-                    return 'input not found. Found: ' + info.join(', ');
+                    return 'input not found';
                 }}
 
                 const text = '{escaped_text}';
 
-                // Focus the textarea first - this is critical for React
+                // Focus the textarea first
                 textarea.focus();
                 textarea.click();
 
-                // For React apps, we need to simulate typing more realistically
+                // For React apps, use native setter with tracker reset
                 if (textarea.tagName === 'TEXTAREA' || textarea.tagName === 'INPUT') {{
-                    // Clear the textarea first
-                    textarea.select();
-                    document.execCommand('delete', false, null);
+                    const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(
+                        window.HTMLTextAreaElement.prototype, 'value'
+                    ).set;
+                    nativeTextAreaValueSetter.call(textarea, text);
 
-                    // Use execCommand insertText which works better with React
-                    // This triggers React's onChange handlers properly
-                    const success = document.execCommand('insertText', false, text);
-
-                    if (!success || textarea.value.length < text.length / 2) {{
-                        // Fallback to native setter if execCommand fails
-                        console.log('Perplexity: execCommand failed, using native setter');
-                        const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(
-                            window.HTMLTextAreaElement.prototype, 'value'
-                        ).set;
-                        nativeTextAreaValueSetter.call(textarea, text);
-
-                        // Dispatch React-compatible events
-                        const inputEvent = new Event('input', {{ bubbles: true, cancelable: true }});
-                        Object.defineProperty(inputEvent, 'target', {{ value: textarea }});
-                        textarea.dispatchEvent(inputEvent);
-                        textarea.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    // Reset React's value tracker to force change detection
+                    const tracker = textarea._valueTracker;
+                    if (tracker) {{
+                        tracker.setValue('');
                     }}
+
+                    // Dispatch input event
+                    textarea.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    textarea.dispatchEvent(new Event('change', {{ bubbles: true }}));
                 }} else {{
                     // For contenteditable divs
-                    textarea.focus();
-                    document.execCommand('selectAll', false, null);
-                    document.execCommand('delete', false, null);
-                    document.execCommand('insertText', false, text);
-
-                    if (!textarea.textContent || textarea.textContent.length < text.length / 2) {{
-                        textarea.textContent = text;
-                        textarea.dispatchEvent(new InputEvent('input', {{
-                            bubbles: true,
-                            cancelable: true,
-                            inputType: 'insertText',
-                            data: text
-                        }}));
-                    }}
+                    textarea.textContent = text;
+                    textarea.dispatchEvent(new InputEvent('input', {{
+                        bubbles: true,
+                        cancelable: true,
+                        inputType: 'insertText',
+                        data: text
+                    }}));
                 }}
 
-                console.log('Perplexity: Set text length:', textarea.value ? textarea.value.length : (textarea.textContent ? textarea.textContent.length : 0), 'Expected:', text.length);
+                console.log('Perplexity: Set text length:', textarea.value ? textarea.value.length : textarea.textContent.length);
 
-                // Store reference and also store the form if available
                 window._perplexityTextarea = textarea;
                 window._perplexityForm = textarea.closest('form');
-
                 return 'filled';
             }} catch (error) {{
                 console.error('Perplexity fill error:', error);
@@ -393,132 +368,44 @@ class PlatformBrowser(QWebEngineView):
         """
 
         def on_fill_result(result):
-            # Debug: log the result
             print(f"Perplexity fill result: {result}")
             if result and result != 'filled':
-                # If there's an error (like "input not found"), pass it to callback
                 if callback:
                     callback(result)
                 return
 
-            # Step 2: Wait a bit, then click send
+            # Step 2: Wait a bit, then send
             def click_send():
                 send_script = """
                 (function() {
                     try {
                         const textarea = window._perplexityTextarea;
-                        const form = window._perplexityForm;
-
                         if (!textarea) {
                             return 'no textarea';
                         }
 
-                        console.log('Perplexity: Textarea value length:', textarea.value ? textarea.value.length : 0);
-
-                        // Ensure textarea is focused
                         textarea.focus();
 
-                        // First try to find and click the send button directly
-                        // Look for button with arrow/send icon near the textarea
-                        const sendSelectors = [
-                            'button[aria-label*="Submit"]',
-                            'button[aria-label*="send"]',
-                            'button[aria-label*="Send"]',
-                            'button[type="submit"]',
-                            'button[class*="submit"]'
-                        ];
-
-                        let sendBtn = null;
-
-                        // Try to find button by looking at parent form or container
+                        // Try to find and click submit button
+                        const form = window._perplexityForm;
                         if (form) {
-                            // Look for submit button in form
-                            const buttons = form.querySelectorAll('button');
-                            for (const btn of buttons) {
-                                // Skip if it's clearly not a send button
-                                if (btn.disabled) continue;
-                                // Check if button has arrow icon or is positioned to the right
-                                const rect = btn.getBoundingClientRect();
-                                const textareaRect = textarea.getBoundingClientRect();
-                                if (rect.right > textareaRect.right - 100 && rect.bottom > textareaRect.top) {
-                                    sendBtn = btn;
-                                    console.log('Perplexity: Found send button in form by position');
-                                    break;
-                                }
+                            const submitBtn = form.querySelector('button[type="submit"], button[aria-label*="Submit"], button[aria-label*="Send"]');
+                            if (submitBtn && !submitBtn.disabled) {
+                                submitBtn.click();
+                                return 'sent via button';
                             }
                         }
 
-                        // If not found, try direct selectors
-                        if (!sendBtn) {
-                            for (const sel of sendSelectors) {
-                                const btn = document.querySelector(sel);
-                                if (btn && !btn.disabled && btn.offsetParent !== null) {
-                                    sendBtn = btn;
-                                    console.log('Perplexity: Found send button with selector:', sel);
-                                    break;
-                                }
-                            }
-                        }
-
-                        // Method 1: Try clicking the send button
-                        if (sendBtn) {
-                            console.log('Perplexity: Clicking send button');
-                            sendBtn.click();
-                            return 'sent via button';
-                        }
-
-                        // Method 2: Try form.requestSubmit() which simulates form submission
-                        if (form && typeof form.requestSubmit === 'function') {
-                            try {
-                                form.requestSubmit();
-                                console.log('Perplexity: Used form.requestSubmit()');
-                                return 'sent via form submit';
-                            } catch (e) {
-                                console.log('Perplexity: form.requestSubmit failed:', e);
-                            }
-                        }
-
-                        // Method 3: Create a submit event
-                        if (form) {
-                            const submitEvent = new Event('submit', {
-                                bubbles: true,
-                                cancelable: true
-                            });
-                            const dispatched = form.dispatchEvent(submitEvent);
-                            if (dispatched) {
-                                console.log('Perplexity: Dispatched submit event');
-                                return 'sent via submit event';
-                            }
-                        }
-
-                        // Method 4: Fallback to Enter key
-                        console.log('Perplexity: Using Enter key to send');
-
-                        // Create and dispatch keyboard events
+                        // Fallback to Enter key
                         const enterEvent = new KeyboardEvent('keydown', {
                             key: 'Enter',
                             code: 'Enter',
                             keyCode: 13,
                             which: 13,
                             bubbles: true,
-                            cancelable: true,
-                            composed: true,
-                            view: window
+                            cancelable: true
                         });
-
                         textarea.dispatchEvent(enterEvent);
-
-                        // Also dispatch keyup
-                        textarea.dispatchEvent(new KeyboardEvent('keyup', {
-                            key: 'Enter',
-                            code: 'Enter',
-                            keyCode: 13,
-                            which: 13,
-                            bubbles: true,
-                            cancelable: true,
-                            composed: true,
-                            view: window
-                        }));
 
                         return 'sent via enter';
                     } catch (e) {
@@ -899,15 +786,8 @@ class PlatformBrowser(QWebEngineView):
             """,
             "perplexity": """
                 (function() {
-                    // Try to click "New Thread" or navigate to home
-                    const newBtn = document.querySelector('a[href="/"], button[aria-label*="New"]');
-                    if (newBtn) {
-                        newBtn.click();
-                        return 'clicked new button';
-                    }
-                    // Navigate to home page
-                    window.location.href = 'https://www.perplexity.ai/';
-                    return 'navigated to home';
+                    // Skip - _fill_perplexity will handle refresh
+                    return 'skipped - will refresh during fill';
                 })();
             """,
             "chatgpt": """
@@ -962,6 +842,239 @@ class PlatformBrowser(QWebEngineView):
         })();
         """
         self.execute_js(script, callback)
+
+    def fill_input_only(self, text: str, callback=None):
+        """Fill input field without submitting, based on platform."""
+        if self.platform == "gemini":
+            self._fill_only_gemini(text, callback)
+        elif self.platform == "perplexity":
+            self._fill_only_perplexity(text, callback)
+        elif self.platform == "chatgpt":
+            self._fill_only_chatgpt(text, callback)
+        else:
+            if callback:
+                callback("unknown platform")
+
+    def _fill_only_gemini(self, text: str, callback=None):
+        """Fill input for Gemini without sending."""
+        escaped_text = (text.replace("\\", "\\\\")
+                           .replace("'", "\\'")
+                           .replace("\n", "\\n")
+                           .replace("\r", "\\r")
+                           .replace("</script>", "<\\/script>"))
+
+        fill_script = f"""
+        (function() {{
+            try {{
+                const selectors = [
+                    'div.ql-editor[contenteditable="true"]',
+                    'rich-textarea div[contenteditable="true"]',
+                    'div[contenteditable="true"][aria-label*="Enter"]',
+                    'div[contenteditable="true"][data-placeholder]',
+                    'div.ProseMirror[contenteditable="true"]',
+                    'div[contenteditable="true"][role="textbox"]',
+                    'div[contenteditable="true"]',
+                    'textarea[aria-label*="Enter"]',
+                    'textarea'
+                ];
+
+                let input = null;
+                for (const sel of selectors) {{
+                    const el = document.querySelector(sel);
+                    if (el && el.offsetParent !== null) {{
+                        input = el;
+                        break;
+                    }}
+                }}
+
+                if (!input) {{
+                    return 'input not found';
+                }}
+
+                input.focus();
+                input.click();
+
+                const text = '{escaped_text}';
+
+                if (input.tagName === 'TEXTAREA') {{
+                    input.value = text;
+                    input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                }} else {{
+                    input.textContent = '';
+                    document.execCommand('selectAll', false, null);
+                    document.execCommand('delete', false, null);
+                    const chunks = text.match(/.{{1,1000}}/g) || [text];
+                    for (let chunk of chunks) {{
+                        document.execCommand('insertText', false, chunk);
+                    }}
+                    if (!input.textContent || input.textContent.length < text.length / 2) {{
+                        input.textContent = text;
+                    }}
+                    input.dispatchEvent(new InputEvent('input', {{
+                        bubbles: true,
+                        cancelable: true,
+                        inputType: 'insertText',
+                        data: text
+                    }}));
+                }}
+
+                return 'filled';
+            }} catch (error) {{
+                return 'error: ' + error.message;
+            }}
+        }})();
+        """
+        self.execute_js(fill_script, callback)
+
+    def _fill_only_perplexity(self, text: str, callback=None):
+        """Fill input for Perplexity without sending."""
+        escaped_text = (text.replace("\\", "\\\\")
+                           .replace("'", "\\'")
+                           .replace("\n", "\\n")
+                           .replace("\r", "\\r")
+                           .replace("</script>", "<\\/script>"))
+
+        fill_script = f"""
+        (function() {{
+            try {{
+                const selectors = [
+                    'textarea[placeholder*="Ask"]',
+                    'textarea[placeholder*="ask"]',
+                    'textarea[placeholder*="Search"]',
+                    'textarea[placeholder*="anything"]',
+                    'textarea[placeholder*="follow-up"]',
+                    'textarea[class*="overflow"]',
+                    'textarea[class*="input"]',
+                    'textarea[rows]',
+                    'div[contenteditable="true"][role="textbox"]',
+                    'div[contenteditable="true"]',
+                    'textarea'
+                ];
+
+                let textarea = null;
+                for (const sel of selectors) {{
+                    const elements = document.querySelectorAll(sel);
+                    for (const el of elements) {{
+                        const style = window.getComputedStyle(el);
+                        if (el.offsetParent !== null &&
+                            style.display !== 'none' &&
+                            style.visibility !== 'hidden') {{
+                            textarea = el;
+                            break;
+                        }}
+                    }}
+                    if (textarea) break;
+                }}
+
+                if (!textarea) {{
+                    return 'input not found';
+                }}
+
+                const text = '{escaped_text}';
+
+                textarea.focus();
+                textarea.click();
+
+                if (textarea.tagName === 'TEXTAREA' || textarea.tagName === 'INPUT') {{
+                    const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(
+                        window.HTMLTextAreaElement.prototype, 'value'
+                    ).set;
+                    nativeTextAreaValueSetter.call(textarea, text);
+
+                    const tracker = textarea._valueTracker;
+                    if (tracker) {{
+                        tracker.setValue('');
+                    }}
+
+                    textarea.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                }} else {{
+                    textarea.textContent = text;
+                    textarea.dispatchEvent(new InputEvent('input', {{
+                        bubbles: true,
+                        cancelable: true,
+                        inputType: 'insertText',
+                        data: text
+                    }}));
+                }}
+
+                return 'filled';
+            }} catch (error) {{
+                return 'error: ' + error.message;
+            }}
+        }})();
+        """
+        self.execute_js(fill_script, callback)
+
+    def _fill_only_chatgpt(self, text: str, callback=None):
+        """Fill input for ChatGPT without sending."""
+        escaped_text = (text.replace("\\", "\\\\")
+                           .replace("'", "\\'")
+                           .replace("\n", "\\n")
+                           .replace("\r", "\\r")
+                           .replace("</script>", "<\\/script>"))
+
+        fill_script = f"""
+        (function() {{
+            try {{
+                const selectors = [
+                    '#prompt-textarea',
+                    'div[id="prompt-textarea"]',
+                    'div[contenteditable="true"][data-id="root"]',
+                    'div[contenteditable="true"][role="textbox"]',
+                    'textarea[id="prompt-textarea"]',
+                    'textarea[placeholder*="Message"]',
+                    'textarea[data-id="root"]'
+                ];
+
+                let input = null;
+                for (const sel of selectors) {{
+                    const el = document.querySelector(sel);
+                    if (el && el.offsetParent !== null) {{
+                        input = el;
+                        break;
+                    }}
+                }}
+
+                if (!input) {{
+                    return 'input not found';
+                }}
+
+                input.focus();
+                input.click();
+
+                const text = '{escaped_text}';
+
+                if (input.tagName === 'TEXTAREA') {{
+                    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                        window.HTMLTextAreaElement.prototype, 'value'
+                    ).set;
+                    nativeInputValueSetter.call(input, text);
+                    input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                }} else {{
+                    input.innerHTML = '';
+                    input.focus();
+                    document.execCommand('insertText', false, text);
+                    if (!input.textContent || input.textContent.length < 10) {{
+                        const p = document.createElement('p');
+                        p.textContent = text;
+                        input.innerHTML = '';
+                        input.appendChild(p);
+                        input.dispatchEvent(new InputEvent('input', {{
+                            bubbles: true,
+                            cancelable: true,
+                            inputType: 'insertText',
+                            data: text
+                        }}));
+                    }}
+                }}
+
+                return 'filled';
+            }} catch (error) {{
+                return 'error: ' + error.message;
+            }}
+        }})();
+        """
+        self.execute_js(fill_script, callback)
 
 
 class PlatformTab(QWidget):
@@ -1072,8 +1185,6 @@ class PlatformTab(QWidget):
 
     def _clear_browser_data(self):
         """Clear cookies and browser data for this profile."""
-        from PyQt6.QtWidgets import QMessageBox
-
         reply = QMessageBox.question(
             self,
             "Clear Browser Data",
@@ -1107,8 +1218,8 @@ class PlatformTab(QWidget):
             self.status_label.setStyleSheet("color: #FF9800; font-size: 12px;")
 
 
-class TerminalTab(QWidget):
-    """Widget for the terminal/logs tab."""
+class LogTab(QWidget):
+    """Widget for the logs tab."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1123,7 +1234,7 @@ class TerminalTab(QWidget):
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(12, 8, 12, 8)
 
-        title = QLabel("Terminal / Logs")
+        title = QLabel("Logs")
         title.setStyleSheet("color: white; font-weight: bold;")
         header_layout.addWidget(title)
 
@@ -1164,6 +1275,17 @@ class TerminalTab(QWidget):
     def append_log(self, message: str, level: str = "INFO"):
         """Append a log message."""
         timestamp = datetime.now().strftime("%H:%M:%S")
+
+        # Color coding based on level
+        color_map = {
+            "INFO": "#D4D4D4",
+            "WARNING": "#FFA500",
+            "ERROR": "#FF6B6B",
+            "SUCCESS": "#4CAF50",
+            "DEBUG": "#9E9E9E"
+        }
+        color = color_map.get(level, "#D4D4D4")
+
         formatted = f"[{timestamp}] [{level}] {message}"
         self.log_output.appendPlainText(formatted)
 
@@ -1175,12 +1297,358 @@ class TerminalTab(QWidget):
         self.log_output.clear()
 
 
+class TerminalWidget(QPlainTextEdit):
+    """A QPlainTextEdit that acts as a terminal emulator."""
+
+    commandEntered = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet("""
+            QPlainTextEdit {
+                background-color: #1e1e1e;
+                color: #d4d4d4;
+                font-family: 'Menlo', 'Monaco', 'Consolas', 'Courier New', monospace;
+                font-size: 13px;
+                border: none;
+                padding: 8px;
+            }
+        """)
+        self.command_history = []
+        self.history_index = -1
+        self.current_command = ""
+        self.prompt_position = 0
+
+    def keyPressEvent(self, event):
+        """Handle key press events for terminal input."""
+        cursor = self.textCursor()
+
+        # Don't allow editing before the prompt
+        if cursor.position() < self.prompt_position:
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            self.setTextCursor(cursor)
+
+        key = event.key()
+
+        if key == 16777220:  # Enter/Return
+            # Get the command from current line
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock, QTextCursor.MoveMode.KeepAnchor)
+            line = cursor.selectedText()
+
+            # Extract command after prompt
+            if "$ " in line:
+                command = line.split("$ ", 1)[-1]
+            else:
+                command = line
+
+            if command.strip():
+                self.command_history.append(command)
+                self.history_index = len(self.command_history)
+
+            self.appendPlainText("")
+            self.commandEntered.emit(command)
+
+        elif key == 16777235:  # Up arrow - history
+            if self.command_history and self.history_index > 0:
+                self.history_index -= 1
+                self._replace_current_command(self.command_history[self.history_index])
+
+        elif key == 16777237:  # Down arrow - history
+            if self.history_index < len(self.command_history) - 1:
+                self.history_index += 1
+                self._replace_current_command(self.command_history[self.history_index])
+            elif self.history_index == len(self.command_history) - 1:
+                self.history_index = len(self.command_history)
+                self._replace_current_command("")
+
+        elif key == 16777219:  # Backspace
+            if cursor.position() > self.prompt_position:
+                super().keyPressEvent(event)
+
+        elif key == 16777223:  # Delete
+            super().keyPressEvent(event)
+
+        elif key == 67 and event.modifiers() & 0x04000000:  # Ctrl+C
+            self.commandEntered.emit("\x03")  # Send interrupt signal
+
+        elif key == 68 and event.modifiers() & 0x04000000:  # Ctrl+D
+            self.commandEntered.emit("\x04")  # Send EOF
+
+        elif key == 76 and event.modifiers() & 0x04000000:  # Ctrl+L
+            self.clear()
+            self.show_prompt()
+
+        else:
+            # Regular character input
+            if cursor.position() >= self.prompt_position:
+                super().keyPressEvent(event)
+
+    def _replace_current_command(self, new_command):
+        """Replace the current command with a new one."""
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.setPosition(self.prompt_position, QTextCursor.MoveMode.KeepAnchor)
+        cursor.removeSelectedText()
+        cursor.insertText(new_command)
+        self.setTextCursor(cursor)
+
+    def show_prompt(self, prompt="$ "):
+        """Show the command prompt."""
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        if not self.toPlainText().endswith("\n") and self.toPlainText():
+            cursor.insertText("\n")
+        cursor.insertText(prompt)
+        self.prompt_position = cursor.position()
+        self.setTextCursor(cursor)
+        self.ensureCursorVisible()
+
+    def append_output(self, text):
+        """Append output text to the terminal."""
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertText(text)
+        self.setTextCursor(cursor)
+        self.ensureCursorVisible()
+
+
+class TerminalTab(QWidget):
+    """Widget for embedded PTY terminal."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.master_fd = None
+        self.slave_fd = None
+        self.shell_pid = None
+        self.notifier = None
+        self._setup_ui()
+        self._setup_pty()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Header
+        header = QFrame()
+        header.setStyleSheet("background-color: #2d2d2d; border-bottom: 1px solid #404040;")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(12, 6, 12, 6)
+
+        title = QLabel("Terminal")
+        title.setStyleSheet("color: #cccccc; font-weight: bold;")
+        header_layout.addWidget(title)
+
+        header_layout.addStretch()
+
+        # Clear button
+        clear_btn = QPushButton("Clear")
+        clear_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3c3c3c;
+                color: #cccccc;
+                border-radius: 3px;
+                padding: 4px 12px;
+                border: 1px solid #505050;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+            }
+        """)
+        clear_btn.clicked.connect(self._clear_terminal)
+        header_layout.addWidget(clear_btn)
+
+        # Restart button
+        restart_btn = QPushButton("Restart")
+        restart_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3c3c3c;
+                color: #cccccc;
+                border-radius: 3px;
+                padding: 4px 12px;
+                border: 1px solid #505050;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+            }
+        """)
+        restart_btn.clicked.connect(self._restart_shell)
+        header_layout.addWidget(restart_btn)
+
+        layout.addWidget(header)
+
+        # Terminal widget
+        self.terminal = TerminalWidget()
+        self.terminal.commandEntered.connect(self._send_command)
+        layout.addWidget(self.terminal, 1)
+
+    def _setup_pty(self):
+        """Setup PTY and spawn shell."""
+        if sys_platform.system() == "Windows":
+            # Windows doesn't support PTY in the same way
+            self.terminal.append_output("PTY terminal not fully supported on Windows.\n")
+            self.terminal.append_output("Using basic command mode.\n")
+            self.terminal.show_prompt()
+            self._windows_mode = True
+            self.process = QProcess(self)
+            self.process.readyReadStandardOutput.connect(self._read_windows_output)
+            self.process.readyReadStandardError.connect(self._read_windows_error)
+            self.process.finished.connect(self._windows_process_finished)
+            return
+
+        self._windows_mode = False
+
+        try:
+            # Create pseudo-terminal
+            self.master_fd, self.slave_fd = pty.openpty()
+
+            # Get the user's default shell
+            shell = os.environ.get("SHELL", "/bin/bash")
+
+            # Fork the process
+            self.shell_pid = os.fork()
+
+            if self.shell_pid == 0:
+                # Child process
+                os.close(self.master_fd)
+                os.setsid()
+
+                # Set up the slave as stdin/stdout/stderr
+                os.dup2(self.slave_fd, 0)
+                os.dup2(self.slave_fd, 1)
+                os.dup2(self.slave_fd, 2)
+
+                if self.slave_fd > 2:
+                    os.close(self.slave_fd)
+
+                # Set terminal environment
+                os.environ["TERM"] = "xterm-256color"
+
+                # Execute the shell
+                os.execv(shell, [shell, "-i"])
+            else:
+                # Parent process
+                os.close(self.slave_fd)
+
+                # Set up socket notifier to read from PTY
+                self.notifier = QSocketNotifier(
+                    self.master_fd,
+                    QSocketNotifier.Type.Read,
+                    self
+                )
+                self.notifier.activated.connect(self._read_pty_output)
+
+        except Exception as e:
+            self.terminal.append_output(f"Failed to create PTY: {e}\n")
+            self.terminal.append_output("Falling back to basic mode.\n")
+            self.terminal.show_prompt()
+            self._windows_mode = True
+            self.process = QProcess(self)
+            self.process.readyReadStandardOutput.connect(self._read_windows_output)
+            self.process.readyReadStandardError.connect(self._read_windows_error)
+
+    def _read_pty_output(self):
+        """Read output from PTY."""
+        try:
+            # Check if there's data available
+            if select.select([self.master_fd], [], [], 0)[0]:
+                data = os.read(self.master_fd, 4096)
+                if data:
+                    text = data.decode("utf-8", errors="replace")
+                    self.terminal.append_output(text)
+        except OSError:
+            pass
+
+    def _send_command(self, command):
+        """Send command to the shell."""
+        if hasattr(self, '_windows_mode') and self._windows_mode:
+            self._send_windows_command(command)
+            return
+
+        if self.master_fd is not None:
+            try:
+                # Send the command with newline
+                os.write(self.master_fd, (command + "\n").encode("utf-8"))
+            except OSError as e:
+                self.terminal.append_output(f"\nError: {e}\n")
+                self.terminal.show_prompt()
+
+    def _send_windows_command(self, command):
+        """Send command in Windows mode."""
+        if not command.strip():
+            self.terminal.show_prompt()
+            return
+
+        if sys_platform.system() == "Windows":
+            self.process.start("cmd", ["/c", command])
+        else:
+            self.process.start("/bin/bash", ["-c", command])
+
+    def _read_windows_output(self):
+        """Read stdout in Windows mode."""
+        data = self.process.readAllStandardOutput()
+        text = bytes(data).decode("utf-8", errors="replace")
+        if text:
+            self.terminal.append_output(text)
+
+    def _read_windows_error(self):
+        """Read stderr in Windows mode."""
+        data = self.process.readAllStandardError()
+        text = bytes(data).decode("utf-8", errors="replace")
+        if text:
+            self.terminal.append_output(text)
+
+    def _windows_process_finished(self):
+        """Handle Windows process completion."""
+        self.terminal.show_prompt()
+
+    def _clear_terminal(self):
+        """Clear the terminal."""
+        self.terminal.clear()
+        if hasattr(self, '_windows_mode') and self._windows_mode:
+            self.terminal.show_prompt()
+
+    def _restart_shell(self):
+        """Restart the shell."""
+        self._cleanup()
+        self.terminal.clear()
+        self._setup_pty()
+
+    def _cleanup(self):
+        """Clean up PTY resources."""
+        if self.notifier:
+            self.notifier.setEnabled(False)
+            self.notifier = None
+
+        if self.master_fd is not None:
+            try:
+                os.close(self.master_fd)
+            except OSError:
+                pass
+            self.master_fd = None
+
+        if self.shell_pid is not None and self.shell_pid > 0:
+            try:
+                os.kill(self.shell_pid, 9)
+                os.waitpid(self.shell_pid, 0)
+            except OSError:
+                pass
+            self.shell_pid = None
+
+    def closeEvent(self, event):
+        """Clean up when closing."""
+        self._cleanup()
+        super().closeEvent(event)
+
+
 class BrowserTabs(QWidget):
-    """Tabbed widget containing embedded browser views and terminal."""
+    """Tabbed widget containing embedded browser views, logs, and terminal."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.platform_tabs: Dict[str, PlatformTab] = {}
+        self.log_tab: Optional[LogTab] = None
         self.terminal_tab: Optional[TerminalTab] = None
 
         self._setup_ui()
@@ -1225,6 +1693,11 @@ class BrowserTabs(QWidget):
             self.platform_tabs[platform] = tab
             self.tabs.addTab(tab, platform_names.get(platform, platform.title()))
 
+        # Add Log tab
+        self.log_tab = LogTab()
+        self.tabs.addTab(self.log_tab, "Log")
+
+        # Add Terminal tab
         self.terminal_tab = TerminalTab()
         self.tabs.addTab(self.terminal_tab, "Terminal")
 
@@ -1237,9 +1710,9 @@ class BrowserTabs(QWidget):
         return None
 
     def append_log(self, message: str, level: str = "INFO"):
-        """Append a log message to the terminal."""
-        if self.terminal_tab:
-            self.terminal_tab.append_log(message, level)
+        """Append a log message to the log tab."""
+        if self.log_tab:
+            self.log_tab.append_log(message, level)
 
     def set_platform_status(self, platform: str, status: str, is_ready: bool = False):
         """Set the status for a platform tab."""
@@ -1252,11 +1725,31 @@ class BrowserTabs(QWidget):
             index = list(self.platform_tabs.keys()).index(platform)
             self.tabs.setCurrentIndex(index)
 
-    def show_terminal(self):
-        """Switch to the terminal tab."""
+    def show_log_tab(self):
+        """Switch to the log tab."""
         self.tabs.setCurrentIndex(len(self.platform_tabs))
 
+    def show_terminal_tab(self):
+        """Switch to the terminal tab."""
+        self.tabs.setCurrentIndex(len(self.platform_tabs) + 1)
+
     def clear_logs(self):
-        """Clear the terminal logs."""
-        if self.terminal_tab:
-            self.terminal_tab.clear()
+        """Clear the log output."""
+        if self.log_tab:
+            self.log_tab.clear()
+
+    def get_active_platform(self) -> str:
+        """Return the name of the currently visible platform tab."""
+        current_index = self.tabs.currentIndex()
+        platform_list = list(self.platform_tabs.keys())
+
+        if current_index < len(platform_list):
+            return platform_list[current_index]
+        return ""
+
+    def get_active_browser(self) -> Optional[PlatformBrowser]:
+        """Return the browser for the active platform tab."""
+        platform = self.get_active_platform()
+        if platform:
+            return self.get_browser(platform)
+        return None

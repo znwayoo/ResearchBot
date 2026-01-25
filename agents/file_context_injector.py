@@ -27,15 +27,30 @@ class FileContextInjector:
 
         suffix = path.suffix.lower()
 
+        # Text-based file types that can be read directly
+        text_types = {
+            ".txt", ".md", ".markdown", ".json", ".xml", ".yaml", ".yml",
+            ".html", ".htm", ".rtf", ".py", ".js", ".ts", ".jsx", ".tsx",
+            ".java", ".c", ".cpp", ".h", ".hpp", ".css", ".scss", ".sass",
+            ".sql", ".sh", ".bash", ".go", ".rs", ".rb", ".php",
+            ".swift", ".kt", ".scala", ".r", ".ipynb",
+            ".log", ".ini", ".conf", ".cfg", ".env", ".gitignore", ".dockerignore"
+        }
+
         extractors = {
             ".pdf": FileContextInjector._extract_pdf,
             ".docx": FileContextInjector._extract_docx,
-            ".txt": FileContextInjector._extract_txt,
             ".csv": FileContextInjector._extract_csv
         }
 
+        # Add all text types to use txt extractor
+        for ext in text_types:
+            extractors[ext] = FileContextInjector._extract_txt
+
         if suffix not in extractors:
-            raise ValueError(f"Unsupported file type: {suffix}")
+            # Try to read as text anyway
+            logger.warning(f"Unknown file type {suffix}, attempting to read as text")
+            extractors[suffix] = FileContextInjector._extract_txt
 
         content = extractors[suffix](file_path)
         logger.info(f"Extracted {len(content)} characters from {path.name}")

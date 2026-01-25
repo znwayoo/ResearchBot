@@ -31,13 +31,53 @@ RESPONSE_WAIT_TIME = 180
 # File handling limits
 MAX_FILES = 5
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
-SUPPORTED_FORMATS = [".pdf", ".docx", ".txt", ".csv"]
+# Text and document formats
+SUPPORTED_FORMATS = [
+    ".pdf", ".docx", ".txt", ".csv",  # Original formats
+    ".md", ".markdown",  # Markdown
+    ".json", ".xml", ".yaml", ".yml",  # Data formats
+    ".html", ".htm",  # Web formats
+    ".rtf",  # Rich text
+    ".py", ".js", ".ts", ".jsx", ".tsx",  # Code files
+    ".java", ".c", ".cpp", ".h", ".hpp",
+    ".css", ".scss", ".sass",
+    ".sql", ".sh", ".bash",
+    ".go", ".rs", ".rb", ".php",
+    ".swift", ".kt", ".scala",
+    ".r", ".R", ".ipynb",
+    ".log", ".ini", ".conf", ".cfg",  # Config files
+    ".env", ".gitignore", ".dockerignore",
+]
 
 # Model priority for task-based routing
 MODEL_PRIORITY = {
     "initial": ["perplexity", "gemini", "chatgpt"],
     "targeted": ["perplexity", "gemini", "chatgpt"],
     "draft": ["chatgpt"]
+}
+
+# Default categories for prompts/responses
+DEFAULT_CATEGORIES = [
+    "Literature Review",
+    "Methodology / Methods",
+    "Data Extraction",
+    "Analysis / Interpretation",
+    "Results Synthesis",
+    "Limitations / Risks",
+    "Future Work / Ideas",
+    "Project Management",
+    "Background / Theory",
+    "Uncategorized",
+]
+
+# Color palette for item labels
+COLOR_PALETTE = {
+    "Blue": "#2196F3",
+    "Green": "#4CAF50",
+    "Yellow": "#FFC107",
+    "Red": "#F44336",
+    "Purple": "#9C27B0",
+    "Gray": "#9E9E9E",
 }
 
 # System prompts for each platform and task type

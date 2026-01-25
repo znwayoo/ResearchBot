@@ -27,6 +27,30 @@ class PlatformType(str, Enum):
     CHATGPT = "chatgpt"
 
 
+class CategoryType(str, Enum):
+    """Research category types for prompts and responses."""
+    LITERATURE_REVIEW = "Literature Review"
+    METHODOLOGY = "Methodology / Methods"
+    DATA_EXTRACTION = "Data Extraction"
+    ANALYSIS = "Analysis / Interpretation"
+    RESULTS_SYNTHESIS = "Results Synthesis"
+    LIMITATIONS = "Limitations / Risks"
+    FUTURE_WORK = "Future Work / Ideas"
+    PROJECT_MANAGEMENT = "Project Management"
+    BACKGROUND = "Background / Theory"
+    UNCATEGORIZED = "Uncategorized"
+
+
+class ColorLabel(str, Enum):
+    """Color labels for visual organization."""
+    BLUE = "Blue"
+    GREEN = "Green"
+    YELLOW = "Yellow"
+    RED = "Red"
+    PURPLE = "Purple"
+    GRAY = "Gray"
+
+
 class UploadedFile(BaseModel):
     """Represents an uploaded file."""
     filename: str
@@ -90,3 +114,30 @@ class MergedResponse(BaseModel):
         if len(v) > 50000:
             raise ValueError("Merged response too long. Maximum 50,000 characters allowed.")
         return v
+
+
+class PromptItem(BaseModel):
+    """Represents a saved prompt item."""
+    id: Optional[int] = None
+    title: str
+    content: str
+    category: CategoryType = CategoryType.UNCATEGORIZED
+    color: ColorLabel = ColorLabel.PURPLE
+    display_order: int = 0
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+
+class ResponseItem(BaseModel):
+    """Represents a grabbed response item."""
+    id: Optional[int] = None
+    title: str
+    content: str
+    category: CategoryType = CategoryType.UNCATEGORIZED
+    color: ColorLabel = ColorLabel.BLUE
+    platform: Optional[str] = None
+    tab_id: Optional[str] = None
+    content_hash: str
+    display_order: int = 0
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)

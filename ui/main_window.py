@@ -20,8 +20,7 @@ from agents.file_context_injector import FileContextInjector
 from agents.response_merger import ResponseMerger
 from agents.task_analyzer import TaskAnalyzer
 from config import APP_NAME, APP_VERSION, WINDOW_HEIGHT, WINDOW_WIDTH
-from ui.chat_widget import ChatWidget
-from ui.input_panel import InputPanel
+from ui.research_workspace import ResearchWorkspace
 from ui.sidebar_tabs import BrowserTabs
 from utils.clipboard_parser import ClipboardParser
 from utils.export_service import ExportService
@@ -64,6 +63,9 @@ class ResearchController(QObject):
         self.last_response_length = 0
         self.stable_response_count = 0  # Count how many times response stayed same length
 
+        # Track previous responses for duplicate detection
+        self.previous_responses: dict = {}  # platform -> last response text
+
     def start_query(self, user_query: UserQuery):
         """Start a research query across platforms."""
         self.current_query = user_query
@@ -95,7 +97,42 @@ class ResearchController(QObject):
             file_context
         )
 
-        self._query_next_platform()
+        # Store files for potential direct upload (like PDFs to Gemini)
+        self.current_files = user_query.files
+
+        # Navigate to new chats on all platforms first
+        self._navigate_to_new_chats()
+
+    def _navigate_to_new_chats(self):
+        """Navigate all platforms to new chat before starting queries."""
+        self.statusUpdate.emit("Preparing new chats on all platforms...")
+        self._new_chat_index = 0
+        self._navigate_next_new_chat()
+
+    def _navigate_next_new_chat(self):
+        """Navigate to new chat for the next platform."""
+        if self._new_chat_index >= len(self.platforms_to_query):
+            # All platforms navigated, start querying
+            self.statusUpdate.emit("Starting queries...")
+            QTimer.singleShot(1000, self._query_next_platform)
+            return
+
+        platform = self.platforms_to_query[self._new_chat_index]
+        browser = self.browser_tabs.get_browser(platform)
+
+        if browser:
+            self.statusUpdate.emit(f"Opening new chat on {platform}...")
+
+            def on_new_chat_done(result):
+                print(f"{platform} new chat: {result}")
+                self._new_chat_index += 1
+                # Wait a bit for the page to load
+                QTimer.singleShot(1500, self._navigate_next_new_chat)
+
+            browser.navigate_to_new_chat(on_new_chat_done)
+        else:
+            self._new_chat_index += 1
+            QTimer.singleShot(100, self._navigate_next_new_chat)
 
     def _query_next_platform(self):
         """Query the next platform in the list."""
@@ -229,12 +266,27 @@ class ResearchController(QObject):
             # Response is stable if same length for 2 consecutive checks (4 seconds) - reduced for faster processing
             if self.stable_response_count >= 2:
                 if self.clipboard.validate_response(response_text):
+                    cleaned_text = self.clipboard.clean_text(response_text)
+
+                    # Check for duplicate response
+                    previous = self.previous_responses.get(platform, "")
+                    if previous and self._is_duplicate_response(previous, cleaned_text):
+                        self.response_check_timer.stop()
+                        self.statusUpdate.emit(f"Duplicate response detected from {platform}, skipping...")
+                        self.browser_tabs.append_log(f"{platform}: Duplicate response detected (same as previous)", "WARNING")
+                        self.current_platform_index += 1
+                        QTimer.singleShot(1000, self._query_next_platform)
+                        return
+
                     self.response_check_timer.stop()
+
+                    # Store this response for future duplicate detection
+                    self.previous_responses[platform] = cleaned_text
 
                     response = PlatformResponse(
                         platform=PlatformType(platform),
                         query_id=self.query_id,
-                        response_text=self.clipboard.clean_text(response_text),
+                        response_text=cleaned_text,
                         timestamp=datetime.now()
                     )
 
@@ -255,19 +307,36 @@ class ResearchController(QObject):
                 # Still generating, log progress
                 if self.response_check_count % 5 == 0:
                     self.statusUpdate.emit(f"Waiting for {platform} response... ({current_length} chars so far)")
-        
+
         # If we get here and no response yet, continue checking
         if current_length == 0:
             if self.response_check_count % 10 == 0:
                 self.statusUpdate.emit(f"Still waiting for {platform} response... (check {self.response_check_count}/{self.max_response_checks})")
             # Don't return - continue checking
             return
-        
+
         # If we have some response but it's not stable yet, continue checking
         if current_length > 0 and current_length < 50:
             if self.response_check_count % 5 == 0:
                 self.statusUpdate.emit(f"Waiting for {platform} to generate more... ({current_length} chars so far)")
             return
+
+    def _is_duplicate_response(self, previous: str, current: str) -> bool:
+        """Check if the current response is a duplicate of the previous one."""
+        # Normalize for comparison
+        prev_normalized = previous.strip().lower()[:500]
+        curr_normalized = current.strip().lower()[:500]
+
+        # If they're very similar (90%+ match in first 500 chars), consider duplicate
+        if prev_normalized == curr_normalized:
+            return True
+
+        # Check if first 200 chars match exactly
+        if len(prev_normalized) > 200 and len(curr_normalized) > 200:
+            if prev_normalized[:200] == curr_normalized[:200]:
+                return True
+
+        return False
 
     def _finish_queries(self):
         """Finish the query process and merge responses."""
@@ -337,11 +406,10 @@ class MainWindow(QMainWindow):
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(8, 8, 4, 8)
 
-        self.chat_widget = ChatWidget()
-        left_layout.addWidget(self.chat_widget, 1)
+        self.browser_tabs = BrowserTabs()
 
-        self.input_panel = InputPanel()
-        left_layout.addWidget(self.input_panel)
+        self.workspace = ResearchWorkspace(self.storage, self.browser_tabs)
+        left_layout.addWidget(self.workspace, 1)
 
         splitter.addWidget(left_widget)
 
@@ -349,7 +417,6 @@ class MainWindow(QMainWindow):
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(4, 8, 8, 8)
 
-        self.browser_tabs = BrowserTabs()
         right_layout.addWidget(self.browser_tabs)
 
         splitter.addWidget(right_widget)
@@ -366,13 +433,7 @@ class MainWindow(QMainWindow):
         self.research_controller.statusUpdate.connect(self._on_status_update)
         self.research_controller.allQueriesComplete.connect(self._on_research_complete)
 
-        self.chat_widget.add_bot_message(
-            "Welcome to ResearchBot!\n\n"
-            "1. Log in to the AI platforms in the browser tabs on the right\n"
-            "2. Type your research query below\n"
-            "3. Click Send to query all platforms\n\n"
-            "The browsers are embedded - just click a tab and log in!"
-        )
+        self.workspace.statusUpdate.connect(self._on_workspace_status)
 
     def _setup_menu(self):
         menubar = self.menuBar()
@@ -397,11 +458,8 @@ class MainWindow(QMainWindow):
 
         edit_menu = menubar.addMenu("Edit")
 
-        clear_chat_action = edit_menu.addAction("Clear Chat")
-        clear_chat_action.triggered.connect(self._clear_chat)
-
         clear_files_action = edit_menu.addAction("Clear Files")
-        clear_files_action.triggered.connect(self.input_panel.clear_files)
+        clear_files_action.triggered.connect(self.workspace.clear_files)
 
         help_menu = menubar.addMenu("Help")
 
@@ -409,8 +467,7 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self._show_about)
 
     def _connect_signals(self):
-        self.input_panel.sendClicked.connect(self._on_send)
-        self.input_panel.exportClicked.connect(self._on_export)
+        pass
 
     def _load_settings(self):
         settings = QSettings(APP_NAME, APP_NAME)
@@ -422,81 +479,26 @@ class MainWindow(QMainWindow):
         settings = QSettings(APP_NAME, APP_NAME)
         settings.setValue("geometry", self.saveGeometry())
 
-    def _on_send(self):
-        query_text = self.input_panel.get_query()
-        if not query_text:
-            return
-
-        self.chat_widget.add_user_message(query_text)
-
-        task_map = {
-            "initial": TaskType.INITIAL,
-            "targeted": TaskType.TARGETED,
-            "draft": TaskType.DRAFT
-        }
-
-        mode_map = {
-            "auto": ModeType.AUTO,
-            "manual": ModeType.MANUAL
-        }
-
-        user_query = UserQuery(
-            session_id=self.current_session_id,
-            query_text=query_text,
-            files=self.input_panel.get_files(),
-            model_choice=self.input_panel.get_model(),
-            mode=mode_map.get(self.input_panel.get_mode(), ModeType.AUTO),
-            task=task_map.get(self.input_panel.get_task(), TaskType.INITIAL)
-        )
-
-        self.input_panel.set_send_enabled(False)
-        self.input_panel.set_status("Researching...", "#FF9800")
-        self.input_panel.start_timer()
-
-        self.research_controller.start_query(user_query)
-
-        self.input_panel.clear_input()
+    def _on_workspace_status(self, message: str):
+        """Handle status updates from workspace."""
+        self.status_bar.showMessage(message)
+        self.browser_tabs.append_log(message, "INFO")
 
     def _on_status_update(self, message: str):
         self.status_bar.showMessage(message)
         self.browser_tabs.append_log(message, "INFO")
 
-        # Update input panel status with current platform
-        if message.startswith("Querying "):
-            platform = message.replace("Querying ", "").replace("...", "").strip()
-            self.input_panel.set_status(f"Querying {platform.title()}...", "#FF9800")
-        elif "waiting for" in message.lower():
-            # Extract platform name from waiting messages
-            parts = message.lower().split("waiting for")
-            if len(parts) > 1:
-                platform = parts[1].split()[0].strip()
-                self.input_panel.set_status(f"Waiting for {platform.title()}...", "#2196F3")
-        elif message == "Merging responses...":
-            self.input_panel.set_status("Merging...", "#9C27B0")
-
     def _on_research_complete(self, result: Optional[MergedResponse]):
-        self.input_panel.set_send_enabled(True)
-        self.input_panel.stop_timer()
-
         if result:
             self.current_response = result
-            self.chat_widget.add_bot_message(result.merged_text)
-            self.input_panel.set_status("Done", "#4CAF50")
-            self.input_panel.set_export_enabled(True)
             self.browser_tabs.append_log("Research complete!", "SUCCESS")
         else:
-            self.chat_widget.add_bot_message(
-                "Sorry, I could not get valid responses from the AI platforms.\n\n"
-                "Please make sure you are logged in to each platform in the browser tabs."
-            )
-            self.input_panel.set_status("No responses", "#F44336")
             self.browser_tabs.append_log("Research failed - no valid responses", "ERROR")
 
         self.status_bar.showMessage("Ready")
 
     def _on_export(self):
-        if self.current_response:
-            self._export("both")
+        self._export("both")
 
     def _export(self, format_type: str):
         if not self.current_response:
@@ -541,29 +543,16 @@ class MainWindow(QMainWindow):
         reply = QMessageBox.question(
             self,
             "New Session",
-            "Start a new session? Current chat will be cleared.",
+            "Start a new session?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
 
         if reply == QMessageBox.StandardButton.Yes:
             self.current_session_id = self.storage.create_session()
             self.current_response = None
-            self.chat_widget.clear_chat()
-            self.input_panel.clear_files()
-            self.input_panel.set_export_enabled(False)
-            self.input_panel.reset_timer()
-            self.input_panel.set_status("Ready", "#4CAF50")
+            self.workspace.clear_files()
             self.browser_tabs.clear_logs()
-
-            self.chat_widget.add_bot_message(
-                "New session started. Ready to research!"
-            )
-
-    def _clear_chat(self):
-        self.chat_widget.clear_chat()
-        self.chat_widget.add_bot_message(
-            "Chat cleared. Ready for new queries."
-        )
+            self.status_bar.showMessage("New session started")
 
     def _show_about(self):
         QMessageBox.about(
