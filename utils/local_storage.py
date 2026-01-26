@@ -16,6 +16,7 @@ from utils.models import (
     PlatformResponse,
     PromptItem,
     ResponseItem,
+    SummaryItem,
     UserQuery,
 )
 
@@ -109,11 +110,17 @@ class LocalStorage:
                     content TEXT NOT NULL,
                     category TEXT DEFAULT 'Uncategorized',
                     color TEXT DEFAULT 'Purple',
+                    custom_color_hex TEXT,
                     display_order INTEGER DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+
+            try:
+                cursor.execute("ALTER TABLE prompts ADD COLUMN custom_color_hex TEXT")
+            except sqlite3.OperationalError:
+                pass
 
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS response_items (
@@ -122,6 +129,7 @@ class LocalStorage:
                     content TEXT NOT NULL,
                     category TEXT DEFAULT 'Uncategorized',
                     color TEXT DEFAULT 'Blue',
+                    custom_color_hex TEXT,
                     platform TEXT,
                     tab_id TEXT,
                     content_hash TEXT NOT NULL UNIQUE,
@@ -131,9 +139,54 @@ class LocalStorage:
                 )
             """)
 
+            try:
+                cursor.execute("ALTER TABLE response_items ADD COLUMN custom_color_hex TEXT")
+            except sqlite3.OperationalError:
+                pass
+
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_prompts_order ON prompts(display_order)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_response_items_order ON response_items(display_order)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_response_items_hash ON response_items(content_hash)")
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS summaries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    category TEXT DEFAULT 'Uncategorized',
+                    color TEXT DEFAULT 'Green',
+                    custom_color_hex TEXT,
+                    source_responses TEXT,
+                    platform TEXT,
+                    display_order INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            try:
+                cursor.execute("ALTER TABLE summaries ADD COLUMN custom_color_hex TEXT")
+            except sqlite3.OperationalError:
+                pass
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS custom_categories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS custom_colors (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    hex_value TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_summaries_order ON summaries(display_order)")
 
             logger.info("Database initialized successfully")
 
@@ -300,13 +353,14 @@ class LocalStorage:
             next_order = cursor.fetchone()[0]
 
             cursor.execute("""
-                INSERT INTO prompts (title, content, category, color, display_order, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO prompts (title, content, category, color, custom_color_hex, display_order, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 prompt.title,
                 prompt.content,
-                prompt.category.value,
-                prompt.color.value,
+                prompt.category,
+                prompt.color,
+                prompt.custom_color_hex,
                 next_order,
                 prompt.created_at.isoformat(),
                 prompt.updated_at.isoformat()
@@ -325,13 +379,14 @@ class LocalStorage:
             cursor = conn.cursor()
             cursor.execute("""
                 UPDATE prompts
-                SET title = ?, content = ?, category = ?, color = ?, updated_at = ?
+                SET title = ?, content = ?, category = ?, color = ?, custom_color_hex = ?, updated_at = ?
                 WHERE id = ?
             """, (
                 prompt.title,
                 prompt.content,
-                prompt.category.value,
-                prompt.color.value,
+                prompt.category,
+                prompt.color,
+                prompt.custom_color_hex,
                 datetime.now().isoformat(),
                 prompt.id
             ))
@@ -353,7 +408,7 @@ class LocalStorage:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT id, title, content, category, color, display_order, created_at, updated_at
+                SELECT id, title, content, category, color, custom_color_hex, display_order, created_at, updated_at
                 FROM prompts
                 ORDER BY display_order ASC
             """)
@@ -365,8 +420,9 @@ class LocalStorage:
                 id=row["id"],
                 title=row["title"],
                 content=row["content"],
-                category=CategoryType(row["category"]),
-                color=ColorLabel(row["color"]),
+                category=row["category"] or "Uncategorized",
+                color=row["color"] or "Purple",
+                custom_color_hex=row["custom_color_hex"],
                 display_order=row["display_order"],
                 created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else datetime.now(),
                 updated_at=datetime.fromisoformat(row["updated_at"]) if row["updated_at"] else datetime.now()
@@ -394,13 +450,14 @@ class LocalStorage:
             next_order = cursor.fetchone()[0]
 
             cursor.execute("""
-                INSERT INTO response_items (title, content, category, color, platform, tab_id, content_hash, display_order, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO response_items (title, content, category, color, custom_color_hex, platform, tab_id, content_hash, display_order, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 response.title,
                 response.content,
-                response.category.value,
-                response.color.value,
+                response.category,
+                response.color,
+                response.custom_color_hex,
                 response.platform,
                 response.tab_id,
                 response.content_hash,
@@ -422,13 +479,14 @@ class LocalStorage:
             cursor = conn.cursor()
             cursor.execute("""
                 UPDATE response_items
-                SET title = ?, content = ?, category = ?, color = ?, updated_at = ?
+                SET title = ?, content = ?, category = ?, color = ?, custom_color_hex = ?, updated_at = ?
                 WHERE id = ?
             """, (
                 response.title,
                 response.content,
-                response.category.value,
-                response.color.value,
+                response.category,
+                response.color,
+                response.custom_color_hex,
                 datetime.now().isoformat(),
                 response.id
             ))
@@ -450,7 +508,7 @@ class LocalStorage:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT id, title, content, category, color, platform, tab_id, content_hash, display_order, created_at, updated_at
+                SELECT id, title, content, category, color, custom_color_hex, platform, tab_id, content_hash, display_order, created_at, updated_at
                 FROM response_items
                 ORDER BY display_order ASC
             """)
@@ -462,8 +520,9 @@ class LocalStorage:
                 id=row["id"],
                 title=row["title"],
                 content=row["content"],
-                category=CategoryType(row["category"]),
-                color=ColorLabel(row["color"]),
+                category=row["category"] or "Uncategorized",
+                color=row["color"] or "Blue",
+                custom_color_hex=row["custom_color_hex"],
                 platform=row["platform"],
                 tab_id=row["tab_id"],
                 content_hash=row["content_hash"],
@@ -492,3 +551,186 @@ class LocalStorage:
             """, (new_order, datetime.now().isoformat(), response_id))
 
         return True
+
+    def save_summary(self, summary: SummaryItem) -> int:
+        """Save a new summary and return its ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT COALESCE(MAX(display_order), -1) + 1 FROM summaries
+            """)
+            next_order = cursor.fetchone()[0]
+
+            source_json = json.dumps(summary.source_responses)
+
+            cursor.execute("""
+                INSERT INTO summaries (title, content, category, color, custom_color_hex, source_responses, platform, display_order, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                summary.title,
+                summary.content,
+                summary.category,
+                summary.color,
+                summary.custom_color_hex,
+                source_json,
+                summary.platform,
+                next_order,
+                summary.created_at.isoformat(),
+                summary.updated_at.isoformat()
+            ))
+            summary_id = cursor.lastrowid
+
+        logger.info(f"Saved summary: {summary_id}")
+        return summary_id
+
+    def update_summary(self, summary: SummaryItem) -> bool:
+        """Update an existing summary."""
+        if summary.id is None:
+            return False
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE summaries
+                SET title = ?, content = ?, category = ?, color = ?, custom_color_hex = ?, updated_at = ?
+                WHERE id = ?
+            """, (
+                summary.title,
+                summary.content,
+                summary.category,
+                summary.color,
+                summary.custom_color_hex,
+                datetime.now().isoformat(),
+                summary.id
+            ))
+
+        logger.info(f"Updated summary: {summary.id}")
+        return True
+
+    def delete_summary(self, summary_id: int) -> bool:
+        """Delete a summary by ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM summaries WHERE id = ?", (summary_id,))
+
+        logger.info(f"Deleted summary: {summary_id}")
+        return True
+
+    def get_all_summaries(self) -> List[SummaryItem]:
+        """Get all summaries ordered by display_order."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, title, content, category, color, custom_color_hex, source_responses, platform, display_order, created_at, updated_at
+                FROM summaries
+                ORDER BY display_order ASC
+            """)
+            rows = cursor.fetchall()
+
+        summaries = []
+        for row in rows:
+            source_responses = json.loads(row["source_responses"]) if row["source_responses"] else []
+            summaries.append(SummaryItem(
+                id=row["id"],
+                title=row["title"],
+                content=row["content"],
+                category=row["category"] or "Uncategorized",
+                color=row["color"] or "Green",
+                custom_color_hex=row["custom_color_hex"],
+                source_responses=source_responses,
+                platform=row["platform"],
+                display_order=row["display_order"],
+                created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else datetime.now(),
+                updated_at=datetime.fromisoformat(row["updated_at"]) if row["updated_at"] else datetime.now()
+            ))
+        return summaries
+
+    def update_summary_order(self, summary_id: int, new_order: int) -> bool:
+        """Update the display order of a summary."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE summaries SET display_order = ?, updated_at = ?
+                WHERE id = ?
+            """, (new_order, datetime.now().isoformat(), summary_id))
+
+        return True
+
+    def add_custom_category(self, name: str) -> int:
+        """Add a custom category and return its ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR IGNORE INTO custom_categories (name, created_at)
+                VALUES (?, ?)
+            """, (name, datetime.now().isoformat()))
+            return cursor.lastrowid
+
+    def get_custom_categories(self) -> List[str]:
+        """Get all custom categories."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM custom_categories ORDER BY name")
+            rows = cursor.fetchall()
+        return [row["name"] for row in rows]
+
+    def rename_custom_category(self, old_name: str, new_name: str) -> bool:
+        """Rename a custom category and update all items using it."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE custom_categories SET name = ? WHERE name = ?",
+                (new_name, old_name)
+            )
+            cursor.execute(
+                "UPDATE prompts SET category = ? WHERE category = ?",
+                (new_name, old_name)
+            )
+            cursor.execute(
+                "UPDATE response_items SET category = ? WHERE category = ?",
+                (new_name, old_name)
+            )
+            cursor.execute(
+                "UPDATE summaries SET category = ? WHERE category = ?",
+                (new_name, old_name)
+            )
+        logger.info(f"Renamed category '{old_name}' to '{new_name}'")
+        return True
+
+    def delete_custom_category(self, name: str) -> bool:
+        """Delete a custom category and set items to Uncategorized."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM custom_categories WHERE name = ?", (name,))
+            cursor.execute(
+                "UPDATE prompts SET category = 'Uncategorized' WHERE category = ?",
+                (name,)
+            )
+            cursor.execute(
+                "UPDATE response_items SET category = 'Uncategorized' WHERE category = ?",
+                (name,)
+            )
+            cursor.execute(
+                "UPDATE summaries SET category = 'Uncategorized' WHERE category = ?",
+                (name,)
+            )
+        logger.info(f"Deleted category '{name}'")
+        return True
+
+    def add_custom_color(self, name: str, hex_value: str) -> int:
+        """Add a custom color and return its ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO custom_colors (name, hex_value, created_at)
+                VALUES (?, ?, ?)
+            """, (name, hex_value, datetime.now().isoformat()))
+            return cursor.lastrowid
+
+    def get_custom_colors(self) -> List[dict]:
+        """Get all custom colors."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name, hex_value FROM custom_colors ORDER BY created_at")
+            rows = cursor.fetchall()
+        return [{"name": row["name"], "hex": row["hex_value"]} for row in rows]

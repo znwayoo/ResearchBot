@@ -121,8 +121,9 @@ class PromptItem(BaseModel):
     id: Optional[int] = None
     title: str
     content: str
-    category: CategoryType = CategoryType.UNCATEGORIZED
-    color: ColorLabel = ColorLabel.PURPLE
+    category: str = "Uncategorized"
+    color: str = "Purple"
+    custom_color_hex: Optional[str] = None
     display_order: int = 0
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
@@ -133,11 +134,27 @@ class ResponseItem(BaseModel):
     id: Optional[int] = None
     title: str
     content: str
-    category: CategoryType = CategoryType.UNCATEGORIZED
-    color: ColorLabel = ColorLabel.BLUE
+    category: str = "Uncategorized"
+    color: str = "Blue"
+    custom_color_hex: Optional[str] = None
     platform: Optional[str] = None
     tab_id: Optional[str] = None
     content_hash: str
+    display_order: int = 0
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+
+class SummaryItem(BaseModel):
+    """Represents a saved summary item."""
+    id: Optional[int] = None
+    title: str
+    content: str
+    category: str = "Uncategorized"
+    color: str = "Green"
+    custom_color_hex: Optional[str] = None
+    source_responses: List[int] = Field(default_factory=list)
+    platform: Optional[str] = None
     display_order: int = 0
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)

@@ -8,19 +8,17 @@ from typing import List
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QButtonGroup,
     QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
     QPushButton,
-    QRadioButton,
     QVBoxLayout,
     QWidget,
 )
 
-from config import MAX_FILE_SIZE, MAX_FILES, SUPPORTED_FORMATS, UPLOAD_DIR
+from config import DARK_THEME, MAX_FILE_SIZE, MAX_FILES, SUPPORTED_FORMATS, UPLOAD_DIR
 from utils.models import UploadedFile
 
 
@@ -35,35 +33,34 @@ class FileChip(QFrame):
         self._setup_ui()
 
     def _setup_ui(self):
-        self.setStyleSheet("""
-            QFrame {
-                background-color: #E3F2FD;
+        self.setStyleSheet(f"""
+            QFrame {{
+                background-color: {DARK_THEME['surface_light']};
                 border-radius: 12px;
-                padding: 4px 8px;
-            }
+            }}
         """)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 4, 4, 4)
-        layout.setSpacing(4)
+        layout.setContentsMargins(10, 4, 6, 4)
+        layout.setSpacing(6)
 
-        name_label = QLabel(self.filename)
-        name_label.setStyleSheet("color: #1976D2; font-size: 12px;")
+        name_label = QLabel(self.filename[:20] + "..." if len(self.filename) > 20 else self.filename)
+        name_label.setStyleSheet(f"color: {DARK_THEME['accent']}; font-size: 11px;")
         layout.addWidget(name_label)
 
         remove_btn = QPushButton("x")
         remove_btn.setFixedSize(16, 16)
-        remove_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #BBDEFB;
+        remove_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DARK_THEME['border']};
                 border-radius: 8px;
                 font-size: 10px;
                 font-weight: bold;
-                color: #1976D2;
-            }
-            QPushButton:hover {
-                background-color: #90CAF9;
-            }
+                color: {DARK_THEME['text_primary']};
+            }}
+            QPushButton:hover {{
+                background-color: {DARK_THEME['error']};
+            }}
         """)
         remove_btn.clicked.connect(lambda: self.removeClicked.emit(self.filename))
         layout.addWidget(remove_btn)
@@ -76,28 +73,31 @@ class PromptManagementBox(QWidget):
     grabRequested = pyqtSignal()
     summarizeRequested = pyqtSignal()
     savePromptRequested = pyqtSignal()
+    deleteSelectedRequested = pyqtSignal()
     filesChanged = pyqtSignal(list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.uploaded_files: List[UploadedFile] = []
         self.file_chips: List[FileChip] = []
+        self._has_selection = False
 
         self._setup_ui()
 
     def _setup_ui(self):
+        self.setStyleSheet(f"background-color: {DARK_THEME['background']};")
+
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
         layout.setContentsMargins(0, 0, 0, 0)
 
         file_section = QFrame()
-        file_section.setObjectName("fileSection")
-        file_section.setStyleSheet("""
-            QFrame#fileSection {
-                background-color: #F5F5F5;
-                border: 2px dashed #BDBDBD;
+        file_section.setStyleSheet(f"""
+            QFrame {{
+                background-color: {DARK_THEME['surface']};
+                border: 1px dashed {DARK_THEME['border']};
                 border-radius: 8px;
-            }
+            }}
         """)
 
         file_layout = QVBoxLayout(file_section)
@@ -107,124 +107,116 @@ class PromptManagementBox(QWidget):
         file_header = QHBoxLayout()
 
         self.file_count_label = QLabel(f"Files (0/{MAX_FILES})")
-        self.file_count_label.setStyleSheet("font-weight: bold; color: #333; font-size: 12px;")
+        self.file_count_label.setStyleSheet(f"font-weight: bold; color: {DARK_THEME['text_primary']}; font-size: 12px;")
         file_header.addWidget(self.file_count_label)
 
         file_header.addStretch()
 
         upload_btn = QPushButton("Upload Files")
-        upload_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #2196F3;
+        upload_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DARK_THEME['accent']};
                 color: white;
                 border-radius: 4px;
                 padding: 5px 10px;
                 font-size: 11px;
-            }
-            QPushButton:hover {
-                background-color: #1976D2;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {DARK_THEME['accent_hover']};
+            }}
         """)
         upload_btn.clicked.connect(self._open_file_dialog)
         file_header.addWidget(upload_btn)
 
         file_layout.addLayout(file_header)
 
-        self.chips_layout = QHBoxLayout()
+        self.chips_container = QWidget()
+        self.chips_layout = QHBoxLayout(self.chips_container)
+        self.chips_layout.setContentsMargins(0, 0, 0, 0)
         self.chips_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        file_layout.addLayout(self.chips_layout)
+        self.chips_layout.setSpacing(6)
+        file_layout.addWidget(self.chips_container)
 
-        mode_layout = QHBoxLayout()
-        mode_layout.setSpacing(16)
-
-        mode_label = QLabel("Upload Mode:")
-        mode_label.setStyleSheet("font-size: 11px; color: #666;")
-        mode_layout.addWidget(mode_label)
-
-        self.mode_group = QButtonGroup(self)
-
-        self.inject_radio = QRadioButton("Inject Content")
-        self.inject_radio.setChecked(True)
-        self.inject_radio.setStyleSheet("font-size: 11px;")
-        self.mode_group.addButton(self.inject_radio)
-        mode_layout.addWidget(self.inject_radio)
-
-        self.upload_radio = QRadioButton("Upload File")
-        self.upload_radio.setStyleSheet("font-size: 11px;")
-        self.mode_group.addButton(self.upload_radio)
-        mode_layout.addWidget(self.upload_radio)
-
-        mode_layout.addStretch()
-        file_layout.addLayout(mode_layout)
+        # Mode info label (inject content only)
+        mode_info = QLabel("File content will be injected into the prompt")
+        mode_info.setStyleSheet(f"font-size: 10px; color: {DARK_THEME['text_secondary']}; font-style: italic;")
+        file_layout.addWidget(mode_info)
 
         layout.addWidget(file_section)
 
         self.text_edit = QPlainTextEdit()
-        self.text_edit.setPlaceholderText("Type your prompt here... (Enter = newline)")
-        self.text_edit.setMaximumHeight(120)
-        self.text_edit.setStyleSheet("""
-            QPlainTextEdit {
-                border: 1px solid #CCC;
+        self.text_edit.setPlaceholderText("Type your prompt here... (Click pills to select, double-click or ... to edit)")
+        self.text_edit.setMaximumHeight(100)
+        self.text_edit.setStyleSheet(f"""
+            QPlainTextEdit {{
+                background-color: {DARK_THEME['surface']};
+                color: {DARK_THEME['text_primary']};
+                border: 1px solid {DARK_THEME['border']};
                 border-radius: 8px;
                 padding: 8px;
                 font-size: 13px;
-            }
-            QPlainTextEdit:focus {
-                border-color: #2196F3;
-            }
+            }}
+            QPlainTextEdit:focus {{
+                border-color: {DARK_THEME['accent']};
+            }}
         """)
         layout.addWidget(self.text_edit)
 
-        button_layout = QHBoxLayout()
+        button_container = QWidget()
+        button_layout = QHBoxLayout(button_container)
+        button_layout.setContentsMargins(0, 4, 0, 0)
         button_layout.setSpacing(8)
 
         self.send_btn = QPushButton("Send")
-        self.send_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
+        self.send_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DARK_THEME['success']};
                 color: white;
-                border-radius: 4px;
+                border-radius: 16px;
                 padding: 8px 20px;
                 font-weight: bold;
-            }
-            QPushButton:hover {
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
                 background-color: #388E3C;
-            }
-            QPushButton:disabled {
-                background-color: #CCC;
-            }
+            }}
+            QPushButton:disabled {{
+                background-color: {DARK_THEME['border']};
+            }}
         """)
         self.send_btn.clicked.connect(self.sendRequested.emit)
         button_layout.addWidget(self.send_btn)
 
         self.grab_btn = QPushButton("Grab")
-        self.grab_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #2196F3;
+        self.grab_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DARK_THEME['accent']};
                 color: white;
-                border-radius: 4px;
+                border-radius: 16px;
                 padding: 8px 20px;
                 font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #1976D2;
-            }
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                background-color: {DARK_THEME['accent_hover']};
+            }}
         """)
         self.grab_btn.clicked.connect(self.grabRequested.emit)
         button_layout.addWidget(self.grab_btn)
 
         self.summarize_btn = QPushButton("Summarize")
-        self.summarize_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #FF9800;
+        self.summarize_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DARK_THEME['warning']};
                 color: white;
-                border-radius: 4px;
+                border-radius: 16px;
                 padding: 8px 20px;
                 font-weight: bold;
-            }
-            QPushButton:hover {
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
                 background-color: #F57C00;
-            }
+            }}
         """)
         self.summarize_btn.clicked.connect(self.summarizeRequested.emit)
         button_layout.addWidget(self.summarize_btn)
@@ -232,22 +224,27 @@ class PromptManagementBox(QWidget):
         button_layout.addStretch()
 
         self.save_btn = QPushButton("Save as Prompt")
-        self.save_btn.setStyleSheet("""
-            QPushButton {
+        self.save_btn.setStyleSheet(f"""
+            QPushButton {{
                 background-color: #9C27B0;
                 color: white;
-                border-radius: 4px;
+                border-radius: 16px;
                 padding: 8px 20px;
                 font-weight: bold;
-            }
-            QPushButton:hover {
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
                 background-color: #7B1FA2;
-            }
+            }}
         """)
         self.save_btn.clicked.connect(self.savePromptRequested.emit)
         button_layout.addWidget(self.save_btn)
 
-        layout.addLayout(button_layout)
+        layout.addWidget(button_container)
+
+    def set_selection_active(self, has_selection: bool):
+        """Track selection state (delete button moved to items panel)."""
+        self._has_selection = has_selection
 
     def _open_file_dialog(self):
         if len(self.uploaded_files) >= MAX_FILES:
@@ -341,7 +338,8 @@ class PromptManagementBox(QWidget):
         return self.uploaded_files.copy()
 
     def get_upload_mode(self) -> str:
-        return "inject" if self.inject_radio.isChecked() else "upload"
+        """Always return inject mode since upload to platform was removed."""
+        return "inject"
 
     def clear_files(self):
         for file in self.uploaded_files:

@@ -1,21 +1,17 @@
-"""Sidebar tabs widget with embedded browser views and logs."""
+"""Sidebar tabs widget with embedded browser views, logs, and Jupyter notebook."""
 
-import os
-import pty
-import platform as sys_platform
-import select
 import time
 from datetime import datetime
 from typing import Dict, Optional
 
-from PyQt6.QtCore import QUrl, pyqtSignal, QTimer, QProcess, QSocketNotifier
-from PyQt6.QtGui import QTextCursor
+from PyQt6.QtCore import QUrl, pyqtSignal, QTimer
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEnginePage
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -24,7 +20,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from config import CONFIG_DIR, PLATFORMS
+from config import CONFIG_DIR, DARK_THEME, PLATFORMS
 
 
 class PlatformBrowser(QWebEngineView):
@@ -87,6 +83,8 @@ class PlatformBrowser(QWebEngineView):
             self._fill_perplexity(text, callback)
         elif self.platform == "chatgpt":
             self._fill_chatgpt(text, callback)
+        elif self.platform == "claude":
+            self._fill_claude(text, callback)
         else:
             if callback:
                 callback("unknown platform")
@@ -147,24 +145,22 @@ class PlatformBrowser(QWebEngineView):
                     input.dispatchEvent(new Event('input', {{ bubbles: true }}));
                     input.dispatchEvent(new Event('change', {{ bubbles: true }}));
                 }} else {{
-                    // For contenteditable, clear first
+                    // For contenteditable, clear and set content directly
                     input.focus();
-                    input.textContent = '';
-                    document.execCommand('selectAll', false, null);
-                    document.execCommand('delete', false, null);
-                    
-                    // Insert text character by character to ensure it all gets in
-                    // (some browsers limit execCommand insertText length)
-                    const chunks = text.match(/.{{1,1000}}/g) || [text];
-                    for (let chunk of chunks) {{
-                        document.execCommand('insertText', false, chunk);
-                    }}
 
-                    // Verify the text was inserted
-                    if (!input.textContent || input.textContent.length < text.length / 2) {{
-                        console.log('Gemini: execCommand may have failed, trying textContent');
-                        input.textContent = text;
-                    }}
+                    // Clear content by setting innerHTML
+                    input.innerHTML = '';
+
+                    // Set content directly - more reliable than execCommand
+                    input.textContent = text;
+
+                    // Move cursor to end
+                    const range = document.createRange();
+                    const sel = window.getSelection();
+                    range.selectNodeContents(input);
+                    range.collapse(false);
+                    sel.removeAllRanges();
+                    sel.addRange(range);
 
                     // Trigger input events
                     input.dispatchEvent(new InputEvent('input', {{
@@ -173,7 +169,7 @@ class PlatformBrowser(QWebEngineView):
                         inputType: 'insertText',
                         data: text
                     }}));
-                    
+
                     console.log('Gemini: Inserted text length:', input.textContent ? input.textContent.length : 0, 'Expected:', text.length);
                 }}
 
@@ -591,6 +587,8 @@ class PlatformBrowser(QWebEngineView):
             self._get_perplexity_response(callback)
         elif self.platform == "chatgpt":
             self._get_chatgpt_response(callback)
+        elif self.platform == "claude":
+            self._get_claude_response(callback)
         else:
             callback('')
 
@@ -765,6 +763,15 @@ class PlatformBrowser(QWebEngineView):
                 return loading !== null || stopBtn !== null;
             })();
             """
+        elif self.platform == "claude":
+            script = """
+            (function() {
+                // Check for loading indicators in Claude
+                const loading = document.querySelector('div[class*="streaming"], button[aria-label*="Stop"]');
+                const stopBtn = document.querySelector('button[data-testid="stop-button"], button[class*="stop"]');
+                return loading !== null || stopBtn !== null;
+            })();
+            """
         else:
             script = "return false;"
 
@@ -851,6 +858,8 @@ class PlatformBrowser(QWebEngineView):
             self._fill_only_perplexity(text, callback)
         elif self.platform == "chatgpt":
             self._fill_only_chatgpt(text, callback)
+        elif self.platform == "claude":
+            self._fill_only_claude(text, callback)
         else:
             if callback:
                 callback("unknown platform")
@@ -900,16 +909,18 @@ class PlatformBrowser(QWebEngineView):
                     input.value = text;
                     input.dispatchEvent(new Event('input', {{ bubbles: true }}));
                 }} else {{
-                    input.textContent = '';
-                    document.execCommand('selectAll', false, null);
-                    document.execCommand('delete', false, null);
-                    const chunks = text.match(/.{{1,1000}}/g) || [text];
-                    for (let chunk of chunks) {{
-                        document.execCommand('insertText', false, chunk);
-                    }}
-                    if (!input.textContent || input.textContent.length < text.length / 2) {{
-                        input.textContent = text;
-                    }}
+                    // Clear and set content directly
+                    input.innerHTML = '';
+                    input.textContent = text;
+
+                    // Move cursor to end
+                    const range = document.createRange();
+                    const sel = window.getSelection();
+                    range.selectNodeContents(input);
+                    range.collapse(false);
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+
                     input.dispatchEvent(new InputEvent('input', {{
                         bubbles: true,
                         cancelable: true,
@@ -1076,6 +1087,264 @@ class PlatformBrowser(QWebEngineView):
         """
         self.execute_js(fill_script, callback)
 
+    def _fill_claude(self, text: str, callback=None):
+        """Fill and send query for Claude."""
+        escaped_text = (text.replace("\\", "\\\\")
+                           .replace("'", "\\'")
+                           .replace("\n", "\\n")
+                           .replace("\r", "\\r")
+                           .replace("</script>", "<\\/script>"))
+
+        fill_script = f"""
+        (function() {{
+            try {{
+                const selectors = [
+                    'div[contenteditable="true"].ProseMirror',
+                    'div[contenteditable="true"][data-placeholder]',
+                    'div.ProseMirror[contenteditable="true"]',
+                    'div[contenteditable="true"]',
+                    'textarea[placeholder*="message"]',
+                    'textarea[placeholder*="Message"]'
+                ];
+
+                let input = null;
+                for (const sel of selectors) {{
+                    const el = document.querySelector(sel);
+                    if (el && el.offsetParent !== null) {{
+                        input = el;
+                        console.log('Claude: Found input with selector:', sel);
+                        break;
+                    }}
+                }}
+
+                if (!input) {{
+                    return 'input not found';
+                }}
+
+                input.focus();
+                input.click();
+
+                const text = '{escaped_text}';
+
+                if (input.tagName === 'TEXTAREA') {{
+                    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                        window.HTMLTextAreaElement.prototype, 'value'
+                    ).set;
+                    nativeInputValueSetter.call(input, text);
+                    input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                }} else {{
+                    input.innerHTML = '';
+                    input.focus();
+                    document.execCommand('insertText', false, text);
+                    if (!input.textContent || input.textContent.length < 10) {{
+                        const p = document.createElement('p');
+                        p.textContent = text;
+                        input.innerHTML = '';
+                        input.appendChild(p);
+                        input.dispatchEvent(new InputEvent('input', {{
+                            bubbles: true,
+                            cancelable: true,
+                            inputType: 'insertText',
+                            data: text
+                        }}));
+                    }}
+                }}
+
+                window._claudeInput = input;
+                return 'filled';
+            }} catch (error) {{
+                console.error('Claude fill error:', error);
+                return 'error: ' + error.message;
+            }}
+        }})();
+        """
+
+        def on_fill_result(result):
+            print(f"Claude fill result: {{result}}")
+            if result == "filled":
+                QTimer.singleShot(300, lambda: self._send_claude_message(callback))
+            elif callback:
+                callback(result)
+
+        self.execute_js(fill_script, on_fill_result)
+
+    def _send_claude_message(self, callback=None):
+        """Send message in Claude after filling."""
+        send_script = """
+        (function() {
+            try {
+                const sendSelectors = [
+                    'button[aria-label*="Send"]',
+                    'button[data-testid="send-button"]',
+                    'button[type="submit"]',
+                    'button svg[class*="send"]'
+                ];
+
+                let sendBtn = null;
+                for (const sel of sendSelectors) {
+                    let el = document.querySelector(sel);
+                    if (el) {
+                        if (el.tagName === 'svg') {
+                            el = el.closest('button');
+                        }
+                        if (el && !el.disabled) {
+                            sendBtn = el;
+                            console.log('Claude: Found send button with selector:', sel);
+                            break;
+                        }
+                    }
+                }
+
+                if (sendBtn) {
+                    console.log('Claude: Clicking send button');
+                    sendBtn.click();
+                    return 'sent';
+                } else {
+                    console.log('Claude: No button found, trying Enter key');
+                    const input = window._claudeInput;
+                    if (input) {
+                        input.dispatchEvent(new KeyboardEvent('keydown', {
+                            key: 'Enter',
+                            code: 'Enter',
+                            keyCode: 13,
+                            bubbles: true,
+                            cancelable: true
+                        }));
+                        return 'enter_sent';
+                    }
+                    return 'no send method found';
+                }
+            } catch (e) {
+                console.error('Claude send error:', e);
+                return 'error: ' + e.message;
+            }
+        })();
+        """
+
+        def on_send_result(result):
+            print(f"Claude send result: {{result}}")
+            if callback:
+                callback(result)
+
+        self.execute_js(send_script, on_send_result)
+
+    def _get_claude_response(self, callback):
+        """Extract response from Claude."""
+        script = """
+        (function() {
+            // Claude response selectors
+            const selectors = [
+                'div[data-testid="assistant-message"]',
+                'div[class*="assistant-message"]',
+                'div[class*="response-content"]',
+                'div.prose',
+                'div[class*="markdown"]'
+            ];
+
+            let lastResponse = null;
+            let lastResponseText = '';
+
+            for (const sel of selectors) {
+                const messages = document.querySelectorAll(sel);
+                if (messages.length > 0) {
+                    lastResponse = messages[messages.length - 1];
+                    break;
+                }
+            }
+
+            if (!lastResponse) {
+                // Try finding by looking at conversation structure
+                const allMessages = document.querySelectorAll('[data-testid*="message"], div[class*="message"]');
+                for (let i = allMessages.length - 1; i >= 0; i--) {
+                    const msg = allMessages[i];
+                    if (msg.getAttribute('data-testid')?.includes('assistant') ||
+                        msg.className?.includes('assistant') ||
+                        msg.className?.includes('response')) {
+                        lastResponse = msg;
+                        break;
+                    }
+                }
+            }
+
+            if (lastResponse) {
+                lastResponseText = lastResponse.innerText || lastResponse.textContent || '';
+            }
+
+            return lastResponseText.trim();
+        })();
+        """
+        self.execute_js(script, callback)
+
+    def _fill_only_claude(self, text: str, callback=None):
+        """Fill input for Claude without sending."""
+        escaped_text = (text.replace("\\", "\\\\")
+                           .replace("'", "\\'")
+                           .replace("\n", "\\n")
+                           .replace("\r", "\\r")
+                           .replace("</script>", "<\\/script>"))
+
+        fill_script = f"""
+        (function() {{
+            try {{
+                const selectors = [
+                    'div[contenteditable="true"].ProseMirror',
+                    'div[contenteditable="true"][data-placeholder]',
+                    'div.ProseMirror[contenteditable="true"]',
+                    'div[contenteditable="true"]',
+                    'textarea[placeholder*="message"]',
+                    'textarea[placeholder*="Message"]'
+                ];
+
+                let input = null;
+                for (const sel of selectors) {{
+                    const el = document.querySelector(sel);
+                    if (el && el.offsetParent !== null) {{
+                        input = el;
+                        break;
+                    }}
+                }}
+
+                if (!input) {{
+                    return 'input not found';
+                }}
+
+                input.focus();
+                input.click();
+
+                const text = '{escaped_text}';
+
+                if (input.tagName === 'TEXTAREA') {{
+                    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                        window.HTMLTextAreaElement.prototype, 'value'
+                    ).set;
+                    nativeInputValueSetter.call(input, text);
+                    input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                }} else {{
+                    input.innerHTML = '';
+                    input.focus();
+                    document.execCommand('insertText', false, text);
+                    if (!input.textContent || input.textContent.length < 10) {{
+                        const p = document.createElement('p');
+                        p.textContent = text;
+                        input.innerHTML = '';
+                        input.appendChild(p);
+                        input.dispatchEvent(new InputEvent('input', {{
+                            bubbles: true,
+                            cancelable: true,
+                            inputType: 'insertText',
+                            data: text
+                        }}));
+                    }}
+                }}
+
+                return 'filled';
+            }} catch (error) {{
+                return 'error: ' + error.message;
+            }}
+        }})();
+        """
+        self.execute_js(fill_script, callback)
+
 
 class PlatformTab(QWidget):
     """Tab containing an embedded browser for a platform."""
@@ -1094,17 +1363,17 @@ class PlatformTab(QWidget):
         layout.setSpacing(0)
 
         header = QFrame()
-        header.setStyleSheet("""
-            QFrame {
-                background-color: #F5F5F5;
-                border-bottom: 1px solid #E0E0E0;
-            }
+        header.setStyleSheet(f"""
+            QFrame {{
+                background-color: {DARK_THEME['surface']};
+                border-bottom: 1px solid {DARK_THEME['border']};
+            }}
         """)
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(12, 6, 12, 6)
 
         self.status_label = QLabel("Loading...")
-        self.status_label.setStyleSheet("color: #666; font-size: 12px;")
+        self.status_label.setStyleSheet(f"color: {DARK_THEME['text_secondary']}; font-size: 12px;")
         header_layout.addWidget(self.status_label)
 
         header_layout.addStretch()
@@ -1155,17 +1424,17 @@ class PlatformTab(QWidget):
         self.browser.navigate(self.url)
 
     def _button_style(self):
-        return """
-            QPushButton {
-                background-color: #E0E0E0;
-                border: none;
+        return f"""
+            QPushButton {{
+                background-color: {DARK_THEME['surface_light']};
+                border: 1px solid {DARK_THEME['border']};
                 border-radius: 4px;
                 padding: 4px 12px;
-                color: #333;
-            }
-            QPushButton:hover {
-                background-color: #BDBDBD;
-            }
+                color: {DARK_THEME['text_primary']};
+            }}
+            QPushButton:hover {{
+                background-color: {DARK_THEME['accent']};
+            }}
         """
 
     def _go_back(self):
@@ -1230,28 +1499,28 @@ class LogTab(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         header = QFrame()
-        header.setStyleSheet("background-color: #263238;")
+        header.setStyleSheet(f"background-color: {DARK_THEME['surface']};")
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(12, 8, 12, 8)
 
         title = QLabel("Logs")
-        title.setStyleSheet("color: white; font-weight: bold;")
+        title.setStyleSheet(f"color: {DARK_THEME['text_primary']}; font-weight: bold;")
         header_layout.addWidget(title)
 
         header_layout.addStretch()
 
         clear_btn = QPushButton("Clear")
-        clear_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #455A64;
-                color: white;
+        clear_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DARK_THEME['surface_light']};
+                color: {DARK_THEME['text_primary']};
                 border-radius: 4px;
                 padding: 4px 12px;
-                border: none;
-            }
-            QPushButton:hover {
-                background-color: #546E7A;
-            }
+                border: 1px solid {DARK_THEME['border']};
+            }}
+            QPushButton:hover {{
+                background-color: {DARK_THEME['accent']};
+            }}
         """)
         clear_btn.clicked.connect(self.clear)
         header_layout.addWidget(clear_btn)
@@ -1297,344 +1566,275 @@ class LogTab(QWidget):
         self.log_output.clear()
 
 
-class TerminalWidget(QPlainTextEdit):
-    """A QPlainTextEdit that acts as a terminal emulator."""
-
-    commandEntered = pyqtSignal(str)
+class JupyterNotebookTab(QWidget):
+    """Widget for embedded Jupyter Notebook using QWebEngineView."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setStyleSheet("""
-            QPlainTextEdit {
-                background-color: #1e1e1e;
-                color: #d4d4d4;
-                font-family: 'Menlo', 'Monaco', 'Consolas', 'Courier New', monospace;
-                font-size: 13px;
-                border: none;
-                padding: 8px;
-            }
-        """)
-        self.command_history = []
-        self.history_index = -1
-        self.current_command = ""
-        self.prompt_position = 0
-
-    def keyPressEvent(self, event):
-        """Handle key press events for terminal input."""
-        cursor = self.textCursor()
-
-        # Don't allow editing before the prompt
-        if cursor.position() < self.prompt_position:
-            cursor.movePosition(QTextCursor.MoveOperation.End)
-            self.setTextCursor(cursor)
-
-        key = event.key()
-
-        if key == 16777220:  # Enter/Return
-            # Get the command from current line
-            cursor.movePosition(QTextCursor.MoveOperation.End)
-            cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock, QTextCursor.MoveMode.KeepAnchor)
-            line = cursor.selectedText()
-
-            # Extract command after prompt
-            if "$ " in line:
-                command = line.split("$ ", 1)[-1]
-            else:
-                command = line
-
-            if command.strip():
-                self.command_history.append(command)
-                self.history_index = len(self.command_history)
-
-            self.appendPlainText("")
-            self.commandEntered.emit(command)
-
-        elif key == 16777235:  # Up arrow - history
-            if self.command_history and self.history_index > 0:
-                self.history_index -= 1
-                self._replace_current_command(self.command_history[self.history_index])
-
-        elif key == 16777237:  # Down arrow - history
-            if self.history_index < len(self.command_history) - 1:
-                self.history_index += 1
-                self._replace_current_command(self.command_history[self.history_index])
-            elif self.history_index == len(self.command_history) - 1:
-                self.history_index = len(self.command_history)
-                self._replace_current_command("")
-
-        elif key == 16777219:  # Backspace
-            if cursor.position() > self.prompt_position:
-                super().keyPressEvent(event)
-
-        elif key == 16777223:  # Delete
-            super().keyPressEvent(event)
-
-        elif key == 67 and event.modifiers() & 0x04000000:  # Ctrl+C
-            self.commandEntered.emit("\x03")  # Send interrupt signal
-
-        elif key == 68 and event.modifiers() & 0x04000000:  # Ctrl+D
-            self.commandEntered.emit("\x04")  # Send EOF
-
-        elif key == 76 and event.modifiers() & 0x04000000:  # Ctrl+L
-            self.clear()
-            self.show_prompt()
-
-        else:
-            # Regular character input
-            if cursor.position() >= self.prompt_position:
-                super().keyPressEvent(event)
-
-    def _replace_current_command(self, new_command):
-        """Replace the current command with a new one."""
-        cursor = self.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.setPosition(self.prompt_position, QTextCursor.MoveMode.KeepAnchor)
-        cursor.removeSelectedText()
-        cursor.insertText(new_command)
-        self.setTextCursor(cursor)
-
-    def show_prompt(self, prompt="$ "):
-        """Show the command prompt."""
-        cursor = self.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        if not self.toPlainText().endswith("\n") and self.toPlainText():
-            cursor.insertText("\n")
-        cursor.insertText(prompt)
-        self.prompt_position = cursor.position()
-        self.setTextCursor(cursor)
-        self.ensureCursorVisible()
-
-    def append_output(self, text):
-        """Append output text to the terminal."""
-        cursor = self.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertText(text)
-        self.setTextCursor(cursor)
-        self.ensureCursorVisible()
-
-
-class TerminalTab(QWidget):
-    """Widget for embedded PTY terminal."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.master_fd = None
-        self.slave_fd = None
-        self.shell_pid = None
-        self.notifier = None
+        self.jupyter_process = None
+        self.jupyter_url = None
         self._setup_ui()
-        self._setup_pty()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Header
+        # Header with URL input
         header = QFrame()
-        header.setStyleSheet("background-color: #2d2d2d; border-bottom: 1px solid #404040;")
+        header.setStyleSheet(f"background-color: {DARK_THEME['surface']}; border-bottom: 1px solid {DARK_THEME['border']};")
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(12, 6, 12, 6)
 
-        title = QLabel("Terminal")
-        title.setStyleSheet("color: #cccccc; font-weight: bold;")
+        title = QLabel("Notebook:")
+        title.setStyleSheet(f"color: {DARK_THEME['text_primary']}; font-weight: bold;")
         header_layout.addWidget(title)
 
-        header_layout.addStretch()
+        # URL input field
+        self.url_input = QLineEdit()
+        self.url_input.setPlaceholderText("Enter Jupyter URL (e.g., http://localhost:8888)")
+        self.url_input.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {DARK_THEME['surface_light']};
+                color: {DARK_THEME['text_primary']};
+                border: 1px solid {DARK_THEME['border']};
+                border-radius: 3px;
+                padding: 4px 8px;
+                font-size: 12px;
+            }}
+            QLineEdit:focus {{
+                border-color: {DARK_THEME['accent']};
+            }}
+        """)
+        self.url_input.returnPressed.connect(self._connect_to_server)
+        header_layout.addWidget(self.url_input, 1)
 
-        # Clear button
-        clear_btn = QPushButton("Clear")
-        clear_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3c3c3c;
-                color: #cccccc;
+        # Connect button
+        connect_btn = QPushButton("Connect")
+        connect_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DARK_THEME['accent']};
+                color: white;
                 border-radius: 3px;
                 padding: 4px 12px;
-                border: 1px solid #505050;
-            }
-            QPushButton:hover {
-                background-color: #4a4a4a;
-            }
+                border: none;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {DARK_THEME['accent_hover']};
+            }}
         """)
-        clear_btn.clicked.connect(self._clear_terminal)
-        header_layout.addWidget(clear_btn)
+        connect_btn.clicked.connect(self._connect_to_server)
+        header_layout.addWidget(connect_btn)
 
-        # Restart button
-        restart_btn = QPushButton("Restart")
-        restart_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3c3c3c;
-                color: #cccccc;
+        # Refresh button
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DARK_THEME['surface_light']};
+                color: {DARK_THEME['text_primary']};
                 border-radius: 3px;
                 padding: 4px 12px;
-                border: 1px solid #505050;
-            }
-            QPushButton:hover {
-                background-color: #4a4a4a;
-            }
+                border: 1px solid {DARK_THEME['border']};
+            }}
+            QPushButton:hover {{
+                background-color: {DARK_THEME['accent']};
+            }}
         """)
-        restart_btn.clicked.connect(self._restart_shell)
-        header_layout.addWidget(restart_btn)
+        refresh_btn.clicked.connect(self._refresh_notebook)
+        header_layout.addWidget(refresh_btn)
+
+        # Auto-start button
+        autostart_btn = QPushButton("Auto Start")
+        autostart_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DARK_THEME['surface_light']};
+                color: {DARK_THEME['text_primary']};
+                border-radius: 3px;
+                padding: 4px 12px;
+                border: 1px solid {DARK_THEME['border']};
+            }}
+            QPushButton:hover {{
+                background-color: {DARK_THEME['success']};
+            }}
+        """)
+        autostart_btn.clicked.connect(self._start_jupyter_server)
+        header_layout.addWidget(autostart_btn)
+
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet(f"color: {DARK_THEME['text_secondary']}; font-size: 11px;")
+        header_layout.addWidget(self.status_label)
 
         layout.addWidget(header)
 
-        # Terminal widget
-        self.terminal = TerminalWidget()
-        self.terminal.commandEntered.connect(self._send_command)
-        layout.addWidget(self.terminal, 1)
+        # Browser view for Jupyter
+        self.browser = QWebEngineView()
+        self.browser.setStyleSheet("background-color: #1e1e1e;")
+        layout.addWidget(self.browser, 1)
 
-    def _setup_pty(self):
-        """Setup PTY and spawn shell."""
-        if sys_platform.system() == "Windows":
-            # Windows doesn't support PTY in the same way
-            self.terminal.append_output("PTY terminal not fully supported on Windows.\n")
-            self.terminal.append_output("Using basic command mode.\n")
-            self.terminal.show_prompt()
-            self._windows_mode = True
-            self.process = QProcess(self)
-            self.process.readyReadStandardOutput.connect(self._read_windows_output)
-            self.process.readyReadStandardError.connect(self._read_windows_error)
-            self.process.finished.connect(self._windows_process_finished)
+        # Welcome page
+        self._show_welcome_page()
+
+    def _show_welcome_page(self):
+        """Show welcome page with instructions."""
+        self.browser.setHtml(f"""
+            <html>
+            <body style="background-color: #1e1e1e; color: #d4d4d4; font-family: sans-serif;
+                         display: flex; justify-content: center; align-items: center; height: 100vh;">
+                <div style="text-align: center; max-width: 600px;">
+                    <h2 style="color: #2196F3;">Jupyter Notebook</h2>
+                    <p>Connect to an existing Jupyter server or start a new one.</p>
+
+                    <div style="background: #2d2d2d; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: left;">
+                        <h3 style="color: #4CAF50; margin-top: 0;">Option 1: Connect to Existing Server</h3>
+                        <p>If you already have Jupyter running, enter the URL above and click Connect.</p>
+                        <code style="background: #1e1e1e; padding: 4px 8px; border-radius: 4px;">http://localhost:8888</code>
+                    </div>
+
+                    <div style="background: #2d2d2d; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: left;">
+                        <h3 style="color: #FF9800; margin-top: 0;">Option 2: Start New Server</h3>
+                        <p>Click "Auto Start" to launch a new Jupyter server.</p>
+                        <p style="color: #888; font-size: 12px;">Requires: <code style="background: #1e1e1e; padding: 2px 6px; border-radius: 4px;">pip install jupyter notebook</code></p>
+                    </div>
+
+                    <div style="background: #2d2d2d; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: left;">
+                        <h3 style="color: #9C27B0; margin-top: 0;">Option 3: Start Manually</h3>
+                        <p>Run in terminal:</p>
+                        <code style="background: #1e1e1e; padding: 8px 12px; border-radius: 4px; display: block; margin-top: 8px;">jupyter notebook --no-browser</code>
+                        <p style="margin-top: 10px;">Then copy the URL and paste it above.</p>
+                    </div>
+                </div>
+            </body>
+            </html>
+        """)
+
+    def _connect_to_server(self):
+        """Connect to a Jupyter server URL."""
+        url = self.url_input.text().strip()
+        if not url:
+            self.status_label.setText("Enter a URL")
+            self.status_label.setStyleSheet(f"color: {DARK_THEME['warning']}; font-size: 11px;")
             return
 
-        self._windows_mode = False
+        if not url.startswith("http"):
+            url = "http://" + url
 
-        try:
-            # Create pseudo-terminal
-            self.master_fd, self.slave_fd = pty.openpty()
+        self.jupyter_url = url
+        self.status_label.setText("Connecting...")
+        self.status_label.setStyleSheet(f"color: {DARK_THEME['accent']}; font-size: 11px;")
+        self.browser.setUrl(QUrl(url))
 
-            # Get the user's default shell
-            shell = os.environ.get("SHELL", "/bin/bash")
+        # Update status after load
+        self.browser.loadFinished.connect(self._on_load_finished)
 
-            # Fork the process
-            self.shell_pid = os.fork()
-
-            if self.shell_pid == 0:
-                # Child process
-                os.close(self.master_fd)
-                os.setsid()
-
-                # Set up the slave as stdin/stdout/stderr
-                os.dup2(self.slave_fd, 0)
-                os.dup2(self.slave_fd, 1)
-                os.dup2(self.slave_fd, 2)
-
-                if self.slave_fd > 2:
-                    os.close(self.slave_fd)
-
-                # Set terminal environment
-                os.environ["TERM"] = "xterm-256color"
-
-                # Execute the shell
-                os.execv(shell, [shell, "-i"])
-            else:
-                # Parent process
-                os.close(self.slave_fd)
-
-                # Set up socket notifier to read from PTY
-                self.notifier = QSocketNotifier(
-                    self.master_fd,
-                    QSocketNotifier.Type.Read,
-                    self
-                )
-                self.notifier.activated.connect(self._read_pty_output)
-
-        except Exception as e:
-            self.terminal.append_output(f"Failed to create PTY: {e}\n")
-            self.terminal.append_output("Falling back to basic mode.\n")
-            self.terminal.show_prompt()
-            self._windows_mode = True
-            self.process = QProcess(self)
-            self.process.readyReadStandardOutput.connect(self._read_windows_output)
-            self.process.readyReadStandardError.connect(self._read_windows_error)
-
-    def _read_pty_output(self):
-        """Read output from PTY."""
-        try:
-            # Check if there's data available
-            if select.select([self.master_fd], [], [], 0)[0]:
-                data = os.read(self.master_fd, 4096)
-                if data:
-                    text = data.decode("utf-8", errors="replace")
-                    self.terminal.append_output(text)
-        except OSError:
-            pass
-
-    def _send_command(self, command):
-        """Send command to the shell."""
-        if hasattr(self, '_windows_mode') and self._windows_mode:
-            self._send_windows_command(command)
-            return
-
-        if self.master_fd is not None:
-            try:
-                # Send the command with newline
-                os.write(self.master_fd, (command + "\n").encode("utf-8"))
-            except OSError as e:
-                self.terminal.append_output(f"\nError: {e}\n")
-                self.terminal.show_prompt()
-
-    def _send_windows_command(self, command):
-        """Send command in Windows mode."""
-        if not command.strip():
-            self.terminal.show_prompt()
-            return
-
-        if sys_platform.system() == "Windows":
-            self.process.start("cmd", ["/c", command])
+    def _on_load_finished(self, success):
+        """Handle page load completion."""
+        if success:
+            self.status_label.setText("Connected")
+            self.status_label.setStyleSheet(f"color: {DARK_THEME['success']}; font-size: 11px;")
         else:
-            self.process.start("/bin/bash", ["-c", command])
+            self.status_label.setText("Failed to connect")
+            self.status_label.setStyleSheet(f"color: {DARK_THEME['error']}; font-size: 11px;")
 
-    def _read_windows_output(self):
-        """Read stdout in Windows mode."""
-        data = self.process.readAllStandardOutput()
-        text = bytes(data).decode("utf-8", errors="replace")
-        if text:
-            self.terminal.append_output(text)
+    def _start_jupyter_server(self):
+        """Start a Jupyter Notebook server in the background."""
+        import subprocess
+        import threading
+        import sys
 
-    def _read_windows_error(self):
-        """Read stderr in Windows mode."""
-        data = self.process.readAllStandardError()
-        text = bytes(data).decode("utf-8", errors="replace")
-        if text:
-            self.terminal.append_output(text)
+        self.status_label.setText("Starting server...")
+        self.status_label.setStyleSheet(f"color: {DARK_THEME['warning']}; font-size: 11px;")
 
-    def _windows_process_finished(self):
-        """Handle Windows process completion."""
-        self.terminal.show_prompt()
+        def start_server():
+            try:
+                import socket
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.bind(('', 0))
+                port = sock.getsockname()[1]
+                sock.close()
 
-    def _clear_terminal(self):
-        """Clear the terminal."""
-        self.terminal.clear()
-        if hasattr(self, '_windows_mode') and self._windows_mode:
-            self.terminal.show_prompt()
+                notebooks_dir = CONFIG_DIR / "notebooks"
+                notebooks_dir.mkdir(parents=True, exist_ok=True)
 
-    def _restart_shell(self):
-        """Restart the shell."""
-        self._cleanup()
-        self.terminal.clear()
-        self._setup_pty()
+                python_exe = sys.executable
+
+                self.jupyter_process = subprocess.Popen(
+                    [
+                        python_exe, "-m", "jupyter", "notebook",
+                        "--no-browser",
+                        f"--port={port}",
+                        "--NotebookApp.token=''",
+                        "--NotebookApp.password=''",
+                        f"--notebook-dir={str(notebooks_dir)}",
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    cwd=str(notebooks_dir)
+                )
+
+                url = f"http://localhost:{port}"
+                time.sleep(3)
+
+                if self.jupyter_process.poll() is not None:
+                    output = self.jupyter_process.stdout.read() if self.jupyter_process.stdout else ""
+                    QTimer.singleShot(0, lambda: self._on_server_error(f"Failed: {output[:300]}"))
+                    return
+
+                QTimer.singleShot(0, lambda: self._on_server_started(url))
+
+            except Exception as e:
+                QTimer.singleShot(0, lambda: self._on_server_error(str(e)))
+
+        thread = threading.Thread(target=start_server, daemon=True)
+        thread.start()
+
+    def _on_server_started(self, url):
+        """Called when server starts successfully."""
+        self.jupyter_url = url
+        self.url_input.setText(url)
+        self.status_label.setText("Server running")
+        self.status_label.setStyleSheet(f"color: {DARK_THEME['success']}; font-size: 11px;")
+        self.browser.setUrl(QUrl(url))
+
+    def _on_server_error(self, error_msg: str):
+        """Called when server fails to start."""
+        self.status_label.setText("Error")
+        self.status_label.setStyleSheet(f"color: {DARK_THEME['error']}; font-size: 11px;")
+        self.browser.setHtml(f"""
+            <html>
+            <body style="background-color: #1e1e1e; color: #d4d4d4; font-family: sans-serif;
+                         display: flex; justify-content: center; align-items: center; height: 100vh;">
+                <div style="text-align: center;">
+                    <h2 style="color: #ff6b6b;">Failed to Start Jupyter Server</h2>
+                    <p style="max-width: 500px;">{error_msg}</p>
+                    <p style="color: #888;">Install Jupyter with:</p>
+                    <code style="background: #2d2d2d; padding: 8px 16px; border-radius: 4px;">pip install jupyter notebook</code>
+                </div>
+            </body>
+            </html>
+        """)
+
+    def _refresh_notebook(self):
+        """Refresh the notebook view."""
+        if self.jupyter_url:
+            self.browser.reload()
+        else:
+            self._show_welcome_page()
 
     def _cleanup(self):
-        """Clean up PTY resources."""
-        if self.notifier:
-            self.notifier.setEnabled(False)
-            self.notifier = None
-
-        if self.master_fd is not None:
+        """Clean up Jupyter server resources."""
+        if self.jupyter_process:
             try:
-                os.close(self.master_fd)
-            except OSError:
-                pass
-            self.master_fd = None
-
-        if self.shell_pid is not None and self.shell_pid > 0:
-            try:
-                os.kill(self.shell_pid, 9)
-                os.waitpid(self.shell_pid, 0)
-            except OSError:
-                pass
-            self.shell_pid = None
+                self.jupyter_process.terminate()
+                self.jupyter_process.wait(timeout=5)
+            except Exception:
+                try:
+                    self.jupyter_process.kill()
+                except Exception:
+                    pass
+            self.jupyter_process = None
+        self.jupyter_url = None
 
     def closeEvent(self, event):
         """Clean up when closing."""
@@ -1643,13 +1843,13 @@ class TerminalTab(QWidget):
 
 
 class BrowserTabs(QWidget):
-    """Tabbed widget containing embedded browser views, logs, and terminal."""
+    """Tabbed widget containing embedded browser views, logs, and Jupyter notebook."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.platform_tabs: Dict[str, PlatformTab] = {}
         self.log_tab: Optional[LogTab] = None
-        self.terminal_tab: Optional[TerminalTab] = None
+        self.jupyter_tab: Optional[JupyterNotebookTab] = None
 
         self._setup_ui()
 
@@ -1658,34 +1858,37 @@ class BrowserTabs(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self.tabs = QTabWidget()
-        self.tabs.setStyleSheet("""
-            QTabWidget::pane {
-                border: 1px solid #CCCCCC;
-                background-color: #FAFAFA;
-            }
-            QTabBar::tab {
+        self.tabs.setStyleSheet(f"""
+            QTabWidget::pane {{
+                border: 1px solid {DARK_THEME['border']};
+                background-color: {DARK_THEME['background']};
+            }}
+            QTabBar::tab {{
                 padding: 10px 20px;
-                background-color: #F5F5F5;
-                border: 1px solid #CCCCCC;
+                background-color: {DARK_THEME['surface']};
+                border: 1px solid {DARK_THEME['border']};
                 border-bottom: none;
                 margin-right: 2px;
-                color: #333;
+                color: {DARK_THEME['text_secondary']};
                 font-weight: bold;
-            }
-            QTabBar::tab:selected {
-                background-color: #FAFAFA;
-                border-bottom: 2px solid #2196F3;
-                color: #2196F3;
-            }
-            QTabBar::tab:hover {
-                background-color: #E3F2FD;
-            }
+            }}
+            QTabBar::tab:selected {{
+                background-color: {DARK_THEME['background']};
+                border-bottom: 2px solid {DARK_THEME['accent']};
+                color: {DARK_THEME['accent']};
+            }}
+            QTabBar::tab:hover {{
+                background-color: {DARK_THEME['surface_light']};
+                color: {DARK_THEME['text_primary']};
+            }}
         """)
 
         platform_names = {
+            "chatgpt": "ChatGPT",
             "gemini": "Gemini",
             "perplexity": "Perplexity",
-            "chatgpt": "ChatGPT"
+            "claude": "Claude",
+            "google": "Google"
         }
 
         for platform, url in PLATFORMS.items():
@@ -1693,13 +1896,13 @@ class BrowserTabs(QWidget):
             self.platform_tabs[platform] = tab
             self.tabs.addTab(tab, platform_names.get(platform, platform.title()))
 
-        # Add Log tab
+        # Add Jupyter Notebook tab
+        self.jupyter_tab = JupyterNotebookTab()
+        self.tabs.addTab(self.jupyter_tab, "Notebook")
+
+        # Add Log tab at the end
         self.log_tab = LogTab()
         self.tabs.addTab(self.log_tab, "Log")
-
-        # Add Terminal tab
-        self.terminal_tab = TerminalTab()
-        self.tabs.addTab(self.terminal_tab, "Terminal")
 
         layout.addWidget(self.tabs)
 
@@ -1726,12 +1929,12 @@ class BrowserTabs(QWidget):
             self.tabs.setCurrentIndex(index)
 
     def show_log_tab(self):
-        """Switch to the log tab."""
-        self.tabs.setCurrentIndex(len(self.platform_tabs))
-
-    def show_terminal_tab(self):
-        """Switch to the terminal tab."""
+        """Switch to the log tab (at the end)."""
         self.tabs.setCurrentIndex(len(self.platform_tabs) + 1)
+
+    def show_notebook_tab(self):
+        """Switch to the Jupyter notebook tab."""
+        self.tabs.setCurrentIndex(len(self.platform_tabs))
 
     def clear_logs(self):
         """Clear the log output."""

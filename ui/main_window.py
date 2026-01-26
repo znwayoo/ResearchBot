@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
 from agents.file_context_injector import FileContextInjector
 from agents.response_merger import ResponseMerger
 from agents.task_analyzer import TaskAnalyzer
-from config import APP_NAME, APP_VERSION, WINDOW_HEIGHT, WINDOW_WIDTH
+from config import APP_NAME, APP_VERSION, DARK_THEME, WINDOW_HEIGHT, WINDOW_WIDTH
 from ui.research_workspace import ResearchWorkspace
 from ui.sidebar_tabs import BrowserTabs
 from utils.clipboard_parser import ClipboardParser
@@ -393,6 +393,56 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
         self.setMinimumSize(1200, 700)
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
+
+        self.setStyleSheet(f"""
+            QMainWindow {{
+                background-color: {DARK_THEME['background']};
+            }}
+            QWidget {{
+                background-color: {DARK_THEME['background']};
+                color: {DARK_THEME['text_primary']};
+            }}
+            QMenuBar {{
+                background-color: {DARK_THEME['surface']};
+                color: {DARK_THEME['text_primary']};
+                border-bottom: 1px solid {DARK_THEME['border']};
+            }}
+            QMenuBar::item:selected {{
+                background-color: {DARK_THEME['surface_light']};
+            }}
+            QMenu {{
+                background-color: {DARK_THEME['surface']};
+                color: {DARK_THEME['text_primary']};
+                border: 1px solid {DARK_THEME['border']};
+            }}
+            QMenu::item:selected {{
+                background-color: {DARK_THEME['surface_light']};
+            }}
+            QStatusBar {{
+                background-color: {DARK_THEME['surface']};
+                color: {DARK_THEME['text_secondary']};
+                border-top: 1px solid {DARK_THEME['border']};
+            }}
+            QSplitter::handle {{
+                background-color: {DARK_THEME['border']};
+            }}
+            QMessageBox {{
+                background-color: {DARK_THEME['surface']};
+            }}
+            QMessageBox QLabel {{
+                color: {DARK_THEME['text_primary']};
+            }}
+            QMessageBox QPushButton {{
+                background-color: {DARK_THEME['surface_light']};
+                color: {DARK_THEME['text_primary']};
+                border: 1px solid {DARK_THEME['border']};
+                padding: 6px 16px;
+                border-radius: 4px;
+            }}
+            QMessageBox QPushButton:hover {{
+                background-color: {DARK_THEME['accent']};
+            }}
+        """)
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)

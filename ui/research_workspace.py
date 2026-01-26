@@ -1,4 +1,4 @@
-"""Research workspace widget that combines prompts, responses, and prompt management."""
+"""Research workspace widget that combines prompts, responses, summaries, and management."""
 
 import hashlib
 from datetime import datetime
@@ -6,21 +6,23 @@ from typing import List, Optional
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
+    QFileDialog,
     QMessageBox,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from config import DARK_THEME
 from ui.item_editor import ItemEditorDialog
 from ui.items_panel import ItemsPanel
 from ui.prompt_box import PromptManagementBox
 from utils.local_storage import LocalStorage
-from utils.models import CategoryType, ColorLabel, PromptItem, ResponseItem
+from utils.models import PromptItem, ResponseItem, SummaryItem
 
 
 class ResearchWorkspace(QWidget):
-    """Main workspace widget with prompts, responses, and management controls."""
+    """Main workspace widget with prompts, responses, summaries, and management controls."""
 
     statusUpdate = pyqtSignal(str)
 
@@ -34,40 +36,47 @@ class ResearchWorkspace(QWidget):
         self._load_data()
 
     def _setup_ui(self):
+        self.setStyleSheet(f"background-color: {DARK_THEME['background']};")
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
         self.tabs = QTabWidget()
-        self.tabs.setStyleSheet("""
-            QTabWidget::pane {
-                border: 1px solid #E0E0E0;
-                background-color: #FAFAFA;
+        self.tabs.setStyleSheet(f"""
+            QTabWidget::pane {{
+                border: 1px solid {DARK_THEME['border']};
+                background-color: {DARK_THEME['background']};
                 border-radius: 4px;
-            }
-            QTabBar::tab {
+            }}
+            QTabBar::tab {{
                 padding: 8px 16px;
-                background-color: #F5F5F5;
-                border: 1px solid #E0E0E0;
+                background-color: {DARK_THEME['surface']};
+                border: 1px solid {DARK_THEME['border']};
                 border-bottom: none;
                 margin-right: 2px;
                 font-weight: bold;
-            }
-            QTabBar::tab:selected {
-                background-color: #FAFAFA;
-                border-bottom: 2px solid #9C27B0;
-                color: #9C27B0;
-            }
-            QTabBar::tab:hover {
-                background-color: #E8E8E8;
-            }
+                color: {DARK_THEME['text_secondary']};
+            }}
+            QTabBar::tab:selected {{
+                background-color: {DARK_THEME['background']};
+                border-bottom: 2px solid {DARK_THEME['accent']};
+                color: {DARK_THEME['accent']};
+            }}
+            QTabBar::tab:hover {{
+                background-color: {DARK_THEME['surface_light']};
+                color: {DARK_THEME['text_primary']};
+            }}
         """)
 
-        self.prompts_panel = ItemsPanel(item_type="prompt")
+        self.prompts_panel = ItemsPanel(item_type="prompt", storage=self.storage)
         self.tabs.addTab(self.prompts_panel, "Prompts")
 
-        self.responses_panel = ItemsPanel(item_type="response")
+        self.responses_panel = ItemsPanel(item_type="response", storage=self.storage)
         self.tabs.addTab(self.responses_panel, "Responses")
+
+        self.summaries_panel = ItemsPanel(item_type="summary", storage=self.storage)
+        self.tabs.addTab(self.summaries_panel, "Summaries")
 
         layout.addWidget(self.tabs, 1)
 
@@ -77,16 +86,30 @@ class ResearchWorkspace(QWidget):
     def _connect_signals(self):
         self.prompts_panel.itemClicked.connect(self._on_prompt_clicked)
         self.prompts_panel.deleteRequested.connect(self._on_prompt_delete)
+        self.prompts_panel.selectionChanged.connect(self._on_selection_changed)
+        self.prompts_panel.deleteSelectedRequested.connect(self._on_bulk_delete_prompts)
         self.prompts_panel.orderChanged.connect(self._on_prompt_order_changed)
+        self.prompts_panel.exportRequested.connect(self._on_export_prompts)
 
         self.responses_panel.itemClicked.connect(self._on_response_clicked)
         self.responses_panel.deleteRequested.connect(self._on_response_delete)
+        self.responses_panel.selectionChanged.connect(self._on_selection_changed)
+        self.responses_panel.deleteSelectedRequested.connect(self._on_bulk_delete_responses)
         self.responses_panel.orderChanged.connect(self._on_response_order_changed)
+        self.responses_panel.exportRequested.connect(self._on_export_responses)
+
+        self.summaries_panel.itemClicked.connect(self._on_summary_clicked)
+        self.summaries_panel.deleteRequested.connect(self._on_summary_delete)
+        self.summaries_panel.selectionChanged.connect(self._on_selection_changed)
+        self.summaries_panel.deleteSelectedRequested.connect(self._on_bulk_delete_summaries)
+        self.summaries_panel.orderChanged.connect(self._on_summary_order_changed)
+        self.summaries_panel.exportRequested.connect(self._on_export_summaries)
 
         self.prompt_box.sendRequested.connect(self._on_send)
         self.prompt_box.grabRequested.connect(self._on_grab)
         self.prompt_box.summarizeRequested.connect(self._on_summarize)
         self.prompt_box.savePromptRequested.connect(self._on_save_prompt)
+        self.prompt_box.deleteSelectedRequested.connect(self._on_delete_selected)
 
     def _load_data(self):
         prompts = self.storage.get_all_prompts()
@@ -95,13 +118,18 @@ class ResearchWorkspace(QWidget):
         responses = self.storage.get_all_response_items()
         self.responses_panel.set_items(responses)
 
+        summaries = self.storage.get_all_summaries()
+        self.summaries_panel.set_items(summaries)
+
     def _on_prompt_clicked(self, item: PromptItem):
-        dialog = ItemEditorDialog(item, item_type="prompt", parent=self)
+        dialog = ItemEditorDialog(item, item_type="prompt", storage=self.storage, parent=self)
+        dialog.deleteRequested.connect(self._on_prompt_delete)
         if dialog.exec():
             result = dialog.get_result()
             if result:
                 self.storage.update_prompt(result)
                 self.prompts_panel.update_item(result)
+                self._refresh_all_category_filters()
                 self.statusUpdate.emit("Prompt updated")
 
     def _on_prompt_delete(self, item: PromptItem):
@@ -117,16 +145,15 @@ class ResearchWorkspace(QWidget):
             self.prompts_panel.remove_item(item)
             self.statusUpdate.emit("Prompt deleted")
 
-    def _on_prompt_order_changed(self, item: PromptItem, new_order: int):
-        self.storage.update_prompt_order(item.id, new_order)
-
     def _on_response_clicked(self, item: ResponseItem):
-        dialog = ItemEditorDialog(item, item_type="response", parent=self)
+        dialog = ItemEditorDialog(item, item_type="response", storage=self.storage, parent=self)
+        dialog.deleteRequested.connect(self._on_response_delete)
         if dialog.exec():
             result = dialog.get_result()
             if result:
                 self.storage.update_response_item(result)
                 self.responses_panel.update_item(result)
+                self._refresh_all_category_filters()
                 self.statusUpdate.emit("Response updated")
 
     def _on_response_delete(self, item: ResponseItem):
@@ -142,8 +169,29 @@ class ResearchWorkspace(QWidget):
             self.responses_panel.remove_item(item)
             self.statusUpdate.emit("Response deleted")
 
-    def _on_response_order_changed(self, item: ResponseItem, new_order: int):
-        self.storage.update_response_order(item.id, new_order)
+    def _on_summary_clicked(self, item: SummaryItem):
+        dialog = ItemEditorDialog(item, item_type="summary", storage=self.storage, parent=self)
+        dialog.deleteRequested.connect(self._on_summary_delete)
+        if dialog.exec():
+            result = dialog.get_result()
+            if result:
+                self.storage.update_summary(result)
+                self.summaries_panel.update_item(result)
+                self._refresh_all_category_filters()
+                self.statusUpdate.emit("Summary updated")
+
+    def _on_summary_delete(self, item: SummaryItem):
+        reply = QMessageBox.question(
+            self,
+            "Delete Summary",
+            f"Delete summary '{item.title[:50]}...'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            self.storage.delete_summary(item.id)
+            self.summaries_panel.remove_item(item)
+            self.statusUpdate.emit("Summary deleted")
 
     def _on_send(self):
         browser = self.browser_tabs.get_active_browser()
@@ -169,9 +217,8 @@ class ResearchWorkspace(QWidget):
         combined_text = "\n\n---\n\n".join(combined_parts)
 
         files = self.prompt_box.get_files()
-        upload_mode = self.prompt_box.get_upload_mode()
 
-        if files and upload_mode == "inject":
+        if files:
             from agents.file_context_injector import FileContextInjector
             try:
                 file_context = FileContextInjector.build_file_context(files)
@@ -199,7 +246,12 @@ class ResearchWorkspace(QWidget):
             return
 
         platform = self.browser_tabs.get_active_platform()
-        self.statusUpdate.emit(f"Grabbing response from {platform}...")
+        current_tab = self.tabs.currentIndex()
+
+        if current_tab == 2:
+            self.statusUpdate.emit(f"Grabbing summary from {platform}...")
+        else:
+            self.statusUpdate.emit(f"Grabbing response from {platform}...")
 
         def on_response_received(response_text):
             if not response_text or len(response_text.strip()) < 10:
@@ -208,31 +260,51 @@ class ResearchWorkspace(QWidget):
 
             content_hash = hashlib.sha256(response_text.encode()).hexdigest()
 
-            if self.storage.response_hash_exists(content_hash):
-                self.statusUpdate.emit("Response already grabbed (duplicate)")
-                return
-
             title = response_text[:80].replace("\n", " ").strip()
             if len(response_text) > 80:
                 title += "..."
 
-            response_item = ResponseItem(
-                title=title,
-                content=response_text,
-                category=CategoryType.UNCATEGORIZED,
-                color=ColorLabel.BLUE,
-                platform=platform,
-                content_hash=content_hash,
-                created_at=datetime.now(),
-                updated_at=datetime.now()
-            )
+            if current_tab == 2:
+                source_ids = getattr(self, '_pending_summary_sources', [])
 
-            response_id = self.storage.save_response_item(response_item)
-            response_item.id = response_id
+                summary_item = SummaryItem(
+                    title=title,
+                    content=response_text,
+                    category="Results Synthesis",
+                    color="Green",
+                    source_responses=source_ids,
+                    platform=platform,
+                    created_at=datetime.now(),
+                    updated_at=datetime.now()
+                )
 
-            self.responses_panel.add_item(response_item)
-            self.tabs.setCurrentIndex(1)
-            self.statusUpdate.emit(f"Response grabbed from {platform}")
+                summary_id = self.storage.save_summary(summary_item)
+                summary_item.id = summary_id
+
+                self.summaries_panel.add_item(summary_item)
+                self.statusUpdate.emit(f"Summary grabbed from {platform}")
+            else:
+                if self.storage.response_hash_exists(content_hash):
+                    self.statusUpdate.emit("Response already grabbed (duplicate)")
+                    return
+
+                response_item = ResponseItem(
+                    title=title,
+                    content=response_text,
+                    category="Uncategorized",
+                    color="Blue",
+                    platform=platform,
+                    content_hash=content_hash,
+                    created_at=datetime.now(),
+                    updated_at=datetime.now()
+                )
+
+                response_id = self.storage.save_response_item(response_item)
+                response_item.id = response_id
+
+                self.responses_panel.add_item(response_item)
+                self.tabs.setCurrentIndex(1)
+                self.statusUpdate.emit(f"Response grabbed from {platform}")
 
         browser.get_response_text(on_response_received)
 
@@ -250,10 +322,13 @@ class ResearchWorkspace(QWidget):
 
         summary_parts = ["Please provide a comprehensive summary of the following responses:\n"]
 
+        source_ids = []
         for i, response in enumerate(selected_responses, 1):
             source = f" (from {response.platform})" if response.platform else ""
             summary_parts.append(f"\n--- Response {i}{source} ---\n")
             summary_parts.append(response.content)
+            if response.id:
+                source_ids.append(response.id)
 
         summary_parts.append("\n\n---\n\nPlease synthesize the key points, identify common themes, and highlight any contradictions or unique insights from these responses.")
 
@@ -262,13 +337,134 @@ class ResearchWorkspace(QWidget):
         platform = self.browser_tabs.get_active_platform()
         self.statusUpdate.emit(f"Sending summarization request to {platform}...")
 
+        self._pending_summary_sources = source_ids
+        self._pending_summary_platform = platform
+
         def on_fill_complete(result):
             if result and ("sent" in str(result).lower() or "filled" in str(result).lower()):
                 self.statusUpdate.emit(f"Summarization request sent to {platform}")
+                self.responses_panel.clear_selection()
             else:
                 self.statusUpdate.emit(f"Failed to send: {result}")
 
         browser.fill_input_only(combined_text, on_fill_complete)
+
+    def grab_summary(self):
+        """Grab the current response as a summary."""
+        browser = self.browser_tabs.get_active_browser()
+        if not browser:
+            self.statusUpdate.emit("No active browser tab")
+            return
+
+        platform = self.browser_tabs.get_active_platform()
+        self.statusUpdate.emit(f"Grabbing summary from {platform}...")
+
+        def on_response_received(response_text):
+            if not response_text or len(response_text.strip()) < 10:
+                self.statusUpdate.emit("No response found")
+                return
+
+            title = response_text[:80].replace("\n", " ").strip()
+            if len(response_text) > 80:
+                title += "..."
+
+            source_ids = getattr(self, '_pending_summary_sources', [])
+
+            summary_item = SummaryItem(
+                title=title,
+                content=response_text,
+                category="Results Synthesis",
+                color="Green",
+                source_responses=source_ids,
+                platform=platform,
+                created_at=datetime.now(),
+                updated_at=datetime.now()
+            )
+
+            summary_id = self.storage.save_summary(summary_item)
+            summary_item.id = summary_id
+
+            self.summaries_panel.add_item(summary_item)
+            self.tabs.setCurrentIndex(2)
+            self.statusUpdate.emit(f"Summary grabbed from {platform}")
+
+        browser.get_response_text(on_response_received)
+
+    def _on_selection_changed(self, selected_items: List):
+        """Update delete button state based on total selections across all panels."""
+        total_selected = (
+            len(self.prompts_panel.get_selected_items()) +
+            len(self.responses_panel.get_selected_items()) +
+            len(self.summaries_panel.get_selected_items())
+        )
+        self.prompt_box.set_selection_active(total_selected > 0)
+
+    def _on_delete_selected(self):
+        """Delete all selected items from the current active tab."""
+        current_tab = self.tabs.currentIndex()
+        if current_tab == 0:
+            self.prompts_panel.delete_selected()
+        elif current_tab == 1:
+            self.responses_panel.delete_selected()
+        elif current_tab == 2:
+            self.summaries_panel.delete_selected()
+
+    def _on_bulk_delete_prompts(self, items: List[PromptItem]):
+        """Handle bulk deletion of prompts."""
+        if not items:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Delete Prompts",
+            f"Delete {len(items)} selected prompt(s)?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            for item in items:
+                self.storage.delete_prompt(item.id)
+                self.prompts_panel.remove_item(item)
+            self.statusUpdate.emit(f"{len(items)} prompt(s) deleted")
+            self.prompt_box.set_selection_active(False)
+
+    def _on_bulk_delete_responses(self, items: List[ResponseItem]):
+        """Handle bulk deletion of responses."""
+        if not items:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Delete Responses",
+            f"Delete {len(items)} selected response(s)?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            for item in items:
+                self.storage.delete_response_item(item.id)
+                self.responses_panel.remove_item(item)
+            self.statusUpdate.emit(f"{len(items)} response(s) deleted")
+            self.prompt_box.set_selection_active(False)
+
+    def _on_bulk_delete_summaries(self, items: List[SummaryItem]):
+        """Handle bulk deletion of summaries."""
+        if not items:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Delete Summaries",
+            f"Delete {len(items)} selected summary(ies)?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            for item in items:
+                self.storage.delete_summary(item.id)
+                self.summaries_panel.remove_item(item)
+            self.statusUpdate.emit(f"{len(items)} summary(ies) deleted")
+            self.prompt_box.set_selection_active(False)
 
     def _on_save_prompt(self):
         text = self.prompt_box.get_text()
@@ -284,8 +480,8 @@ class ResearchWorkspace(QWidget):
         prompt_item = PromptItem(
             title=title,
             content=text,
-            category=CategoryType.UNCATEGORIZED,
-            color=ColorLabel.PURPLE,
+            category="Uncategorized",
+            color="Purple",
             created_at=datetime.now(),
             updated_at=datetime.now()
         )
@@ -297,6 +493,179 @@ class ResearchWorkspace(QWidget):
         self.tabs.setCurrentIndex(0)
         self.prompt_box.clear_text()
         self.statusUpdate.emit("Prompt saved")
+
+    def _on_prompt_order_changed(self, item, new_order: int):
+        """Handle prompt reorder."""
+        for i, prompt in enumerate(self.prompts_panel.items):
+            self.storage.update_prompt_order(prompt.id, i)
+        self.statusUpdate.emit("Prompt order updated")
+
+    def _on_response_order_changed(self, item, new_order: int):
+        """Handle response reorder."""
+        for i, response in enumerate(self.responses_panel.items):
+            self.storage.update_response_order(response.id, i)
+        self.statusUpdate.emit("Response order updated")
+
+    def _on_summary_order_changed(self, item, new_order: int):
+        """Handle summary reorder."""
+        for i, summary in enumerate(self.summaries_panel.items):
+            self.storage.update_summary_order(summary.id, i)
+        self.statusUpdate.emit("Summary order updated")
+
+    def _refresh_all_category_filters(self):
+        """Refresh category filters in all panels after category changes."""
+        self.prompts_panel.refresh_categories()
+        self.responses_panel.refresh_categories()
+        self.summaries_panel.refresh_categories()
+
+    def _on_export_prompts(self, items: List[PromptItem]):
+        """Export prompts to a text file."""
+        self._export_items(items, "prompts")
+
+    def _on_export_responses(self, items: List[ResponseItem]):
+        """Export responses to a text file."""
+        self._export_items(items, "responses")
+
+    def _on_export_summaries(self, items: List[SummaryItem]):
+        """Export summaries to a text file."""
+        self._export_items(items, "summaries")
+
+    def _export_items(self, items: List, item_type: str):
+        """Export items to a file."""
+        if not items:
+            self.statusUpdate.emit("No items to export")
+            return
+
+        file_path, selected_filter = QFileDialog.getSaveFileName(
+            self,
+            f"Export {item_type.title()}",
+            f"{item_type}_export.pdf",
+            "PDF Files (*.pdf);;Text Files (*.txt);;Markdown Files (*.md);;All Files (*)"
+        )
+
+        if not file_path:
+            return
+
+        try:
+            if file_path.endswith('.pdf') or 'PDF' in selected_filter:
+                self._export_to_pdf(items, item_type, file_path)
+            else:
+                self._export_to_text(items, item_type, file_path)
+
+            self.statusUpdate.emit(f"Exported {len(items)} {item_type} to {file_path}")
+        except Exception as e:
+            self.statusUpdate.emit(f"Export failed: {e}")
+
+    def _export_to_text(self, items: List, item_type: str, file_path: str):
+        """Export items to text/markdown file."""
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(f"# {item_type.title()} Export\n\n")
+            for i, item in enumerate(items, 1):
+                f.write(f"## {i}. {item.title}\n")
+                f.write(f"Category: {item.category}\n")
+                if hasattr(item, 'platform') and item.platform:
+                    f.write(f"Platform: {item.platform}\n")
+                f.write(f"\n{item.content}\n")
+                f.write("\n---\n\n")
+
+    def _export_to_pdf(self, items: List, item_type: str, file_path: str):
+        """Export items to a nicely formatted PDF."""
+        try:
+            from reportlab.lib import colors
+            from reportlab.lib.pagesizes import letter, A4
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.units import inch
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
+            from reportlab.lib.enums import TA_LEFT, TA_CENTER
+        except ImportError:
+            # Fallback to text if reportlab not installed
+            self.statusUpdate.emit("PDF export requires reportlab. Installing...")
+            import subprocess
+            subprocess.run(["pip", "install", "reportlab"], capture_output=True)
+            from reportlab.lib import colors
+            from reportlab.lib.pagesizes import letter, A4
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.units import inch
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
+            from reportlab.lib.enums import TA_LEFT, TA_CENTER
+
+        doc = SimpleDocTemplate(
+            file_path,
+            pagesize=letter,
+            rightMargin=0.75*inch,
+            leftMargin=0.75*inch,
+            topMargin=0.75*inch,
+            bottomMargin=0.75*inch
+        )
+
+        styles = getSampleStyleSheet()
+
+        # Custom styles
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=24,
+            spaceAfter=20,
+            textColor=colors.HexColor('#2196F3'),
+            alignment=TA_CENTER
+        )
+
+        item_title_style = ParagraphStyle(
+            'ItemTitle',
+            parent=styles['Heading2'],
+            fontSize=14,
+            spaceBefore=15,
+            spaceAfter=8,
+            textColor=colors.HexColor('#1E1E1E'),
+            fontName='Helvetica-Bold'
+        )
+
+        meta_style = ParagraphStyle(
+            'Meta',
+            parent=styles['Normal'],
+            fontSize=10,
+            textColor=colors.HexColor('#666666'),
+            spaceAfter=10
+        )
+
+        content_style = ParagraphStyle(
+            'Content',
+            parent=styles['Normal'],
+            fontSize=11,
+            leading=16,
+            spaceAfter=15,
+            textColor=colors.HexColor('#333333')
+        )
+
+        story = []
+
+        # Title
+        story.append(Paragraph(f"{item_type.title()} Export", title_style))
+        story.append(Spacer(1, 0.3*inch))
+
+        # Items
+        for i, item in enumerate(items, 1):
+            # Item title
+            story.append(Paragraph(f"{i}. {item.title}", item_title_style))
+
+            # Metadata
+            meta_parts = [f"Category: {item.category}"]
+            if hasattr(item, 'platform') and item.platform:
+                meta_parts.append(f"Platform: {item.platform}")
+            if hasattr(item, 'created_at') and item.created_at:
+                meta_parts.append(f"Date: {item.created_at.strftime('%Y-%m-%d %H:%M')}")
+            story.append(Paragraph(" | ".join(meta_parts), meta_style))
+
+            # Content - handle special characters
+            content = item.content.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            content = content.replace('\n', '<br/>')
+            story.append(Paragraph(content, content_style))
+
+            # Separator
+            if i < len(items):
+                story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#E0E0E0')))
+
+        doc.build(story)
 
     def get_prompt_box(self) -> PromptManagementBox:
         return self.prompt_box

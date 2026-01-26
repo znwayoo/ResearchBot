@@ -17,11 +17,13 @@ APP_VERSION = "1.0.0"
 WINDOW_WIDTH = 1600
 WINDOW_HEIGHT = 900
 
-# Platform URLs
+# Platform URLs (ordered: ChatGPT, Gemini, Perplexity, Claude, Google)
 PLATFORMS = {
+    "chatgpt": "https://chat.openai.com",
     "gemini": "https://gemini.google.com",
     "perplexity": "https://www.perplexity.ai",
-    "chatgpt": "https://chat.openai.com"
+    "claude": "https://claude.ai",
+    "google": "https://www.google.com"
 }
 
 # Browser automation timeouts (seconds)
@@ -77,7 +79,22 @@ COLOR_PALETTE = {
     "Yellow": "#FFC107",
     "Red": "#F44336",
     "Purple": "#9C27B0",
-    "Gray": "#9E9E9E",
+    "Gray": "#757575",
+}
+
+# Dark theme colors
+DARK_THEME = {
+    "background": "#1E1E1E",
+    "surface": "#2D2D2D",
+    "surface_light": "#3D3D3D",
+    "border": "#404040",
+    "text_primary": "#E0E0E0",
+    "text_secondary": "#A0A0A0",
+    "accent": "#2196F3",
+    "accent_hover": "#1976D2",
+    "success": "#4CAF50",
+    "warning": "#FF9800",
+    "error": "#F44336",
 }
 
 # System prompts for each platform and task type
