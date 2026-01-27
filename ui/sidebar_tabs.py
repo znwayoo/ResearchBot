@@ -1,4 +1,4 @@
-"""Sidebar tabs widget with embedded browser views, logs, and Jupyter notebook."""
+"""Sidebar tabs widget with embedded browser views, logs, and markdown notebook."""
 
 import time
 from datetime import datetime
@@ -8,6 +8,7 @@ from PyQt6.QtCore import QUrl, pyqtSignal, QTimer
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEnginePage
 from PyQt6.QtWidgets import (
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -16,9 +17,12 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QTabWidget,
+    QTextEdit,
+    QToolBar,
     QVBoxLayout,
     QWidget,
 )
+from PyQt6.QtGui import QFont, QTextCharFormat, QTextCursor, QAction, QTextListFormat
 
 from config import CONFIG_DIR, DARK_THEME, PLATFORMS
 
@@ -1566,13 +1570,13 @@ class LogTab(QWidget):
         self.log_output.clear()
 
 
-class JupyterNotebookTab(QWidget):
-    """Widget for embedded Jupyter Notebook using QWebEngineView."""
+class MarkdownNotebookTab(QWidget):
+    """Rich text notebook editor with Word/Google Docs-like formatting."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.jupyter_process = None
-        self.jupyter_url = None
+        self._current_file = None
+        self._is_modified = False
         self._setup_ui()
 
     def _setup_ui(self):
@@ -1580,276 +1584,454 @@ class JupyterNotebookTab(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Header with URL input
-        header = QFrame()
-        header.setStyleSheet(f"background-color: {DARK_THEME['surface']}; border-bottom: 1px solid {DARK_THEME['border']};")
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(12, 6, 12, 6)
+        # Toolbar with formatting buttons
+        toolbar = QFrame()
+        toolbar.setStyleSheet(f"""
+            QFrame {{
+                background-color: {DARK_THEME['surface']};
+                border-bottom: 1px solid {DARK_THEME['border']};
+            }}
+        """)
+        toolbar_layout = QHBoxLayout(toolbar)
+        toolbar_layout.setContentsMargins(8, 4, 8, 4)
+        toolbar_layout.setSpacing(4)
 
-        title = QLabel("Notebook:")
-        title.setStyleSheet(f"color: {DARK_THEME['text_primary']}; font-weight: bold;")
-        header_layout.addWidget(title)
+        # File operations
+        self.new_btn = self._create_toolbar_btn("New", self._new_document)
+        self.open_btn = self._create_toolbar_btn("Open", self._open_document)
+        self.save_btn = self._create_toolbar_btn("Save", self._save_document)
+        toolbar_layout.addWidget(self.new_btn)
+        toolbar_layout.addWidget(self.open_btn)
+        toolbar_layout.addWidget(self.save_btn)
 
-        # URL input field
-        self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText("Enter Jupyter URL (e.g., http://localhost:8888)")
-        self.url_input.setStyleSheet(f"""
+        # Separator
+        sep1 = QFrame()
+        sep1.setFrameShape(QFrame.Shape.VLine)
+        sep1.setStyleSheet(f"background-color: {DARK_THEME['border']};")
+        sep1.setFixedWidth(1)
+        toolbar_layout.addWidget(sep1)
+
+        # Text formatting buttons
+        self.bold_btn = self._create_toolbar_btn("B", self._toggle_bold, bold=True)
+        self.italic_btn = self._create_toolbar_btn("I", self._toggle_italic, italic=True)
+        self.underline_btn = self._create_toolbar_btn("U", self._toggle_underline, underline=True)
+        self.strike_btn = self._create_toolbar_btn("S", self._toggle_strikethrough, strike=True)
+        toolbar_layout.addWidget(self.bold_btn)
+        toolbar_layout.addWidget(self.italic_btn)
+        toolbar_layout.addWidget(self.underline_btn)
+        toolbar_layout.addWidget(self.strike_btn)
+
+        # Separator
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.VLine)
+        sep2.setStyleSheet(f"background-color: {DARK_THEME['border']};")
+        sep2.setFixedWidth(1)
+        toolbar_layout.addWidget(sep2)
+
+        # Headers
+        self.h1_btn = self._create_toolbar_btn("H1", lambda: self._set_heading(1))
+        self.h2_btn = self._create_toolbar_btn("H2", lambda: self._set_heading(2))
+        self.h3_btn = self._create_toolbar_btn("H3", lambda: self._set_heading(3))
+        self.normal_btn = self._create_toolbar_btn("Normal", self._set_normal)
+        toolbar_layout.addWidget(self.h1_btn)
+        toolbar_layout.addWidget(self.h2_btn)
+        toolbar_layout.addWidget(self.h3_btn)
+        toolbar_layout.addWidget(self.normal_btn)
+
+        # Separator
+        sep3 = QFrame()
+        sep3.setFrameShape(QFrame.Shape.VLine)
+        sep3.setStyleSheet(f"background-color: {DARK_THEME['border']};")
+        sep3.setFixedWidth(1)
+        toolbar_layout.addWidget(sep3)
+
+        # Lists
+        self.bullet_btn = self._create_toolbar_btn("Bullet", self._toggle_bullet_list)
+        self.number_btn = self._create_toolbar_btn("Number", self._toggle_number_list)
+        toolbar_layout.addWidget(self.bullet_btn)
+        toolbar_layout.addWidget(self.number_btn)
+
+        # Separator
+        sep4 = QFrame()
+        sep4.setFrameShape(QFrame.Shape.VLine)
+        sep4.setStyleSheet(f"background-color: {DARK_THEME['border']};")
+        sep4.setFixedWidth(1)
+        toolbar_layout.addWidget(sep4)
+
+        # Alignment
+        self.align_left_btn = self._create_toolbar_btn("Left", lambda: self._set_alignment(Qt.AlignmentFlag.AlignLeft))
+        self.align_center_btn = self._create_toolbar_btn("Center", lambda: self._set_alignment(Qt.AlignmentFlag.AlignCenter))
+        self.align_right_btn = self._create_toolbar_btn("Right", lambda: self._set_alignment(Qt.AlignmentFlag.AlignRight))
+        toolbar_layout.addWidget(self.align_left_btn)
+        toolbar_layout.addWidget(self.align_center_btn)
+        toolbar_layout.addWidget(self.align_right_btn)
+
+        toolbar_layout.addStretch()
+
+        # Status label
+        self.status_label = QLabel("Ready")
+        self.status_label.setStyleSheet(f"color: {DARK_THEME['text_secondary']}; font-size: 11px;")
+        toolbar_layout.addWidget(self.status_label)
+
+        layout.addWidget(toolbar)
+
+        # Title input
+        title_frame = QFrame()
+        title_frame.setStyleSheet(f"background-color: {DARK_THEME['surface']}; border-bottom: 1px solid {DARK_THEME['border']};")
+        title_layout = QHBoxLayout(title_frame)
+        title_layout.setContentsMargins(12, 8, 12, 8)
+
+        title_label = QLabel("Title:")
+        title_label.setStyleSheet(f"color: {DARK_THEME['text_secondary']}; font-size: 12px;")
+        title_layout.addWidget(title_label)
+
+        self.title_input = QLineEdit()
+        self.title_input.setPlaceholderText("Untitled Note")
+        self.title_input.setStyleSheet(f"""
             QLineEdit {{
                 background-color: {DARK_THEME['surface_light']};
                 color: {DARK_THEME['text_primary']};
                 border: 1px solid {DARK_THEME['border']};
-                border-radius: 3px;
-                padding: 4px 8px;
-                font-size: 12px;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-size: 14px;
+                font-weight: bold;
             }}
             QLineEdit:focus {{
                 border-color: {DARK_THEME['accent']};
             }}
         """)
-        self.url_input.returnPressed.connect(self._connect_to_server)
-        header_layout.addWidget(self.url_input, 1)
+        self.title_input.textChanged.connect(self._on_content_changed)
+        title_layout.addWidget(self.title_input)
 
-        # Connect button
-        connect_btn = QPushButton("Connect")
-        connect_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {DARK_THEME['accent']};
-                color: white;
-                border-radius: 3px;
-                padding: 4px 12px;
+        layout.addWidget(title_frame)
+
+        # Rich text editor
+        self.editor = QTextEdit()
+        self.editor.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {DARK_THEME['background']};
+                color: {DARK_THEME['text_primary']};
                 border: none;
-                font-weight: bold;
+                padding: 16px;
+                font-size: 14px;
+                line-height: 1.6;
             }}
-            QPushButton:hover {{
-                background-color: {DARK_THEME['accent_hover']};
+            QScrollBar:vertical {{
+                background-color: {DARK_THEME['surface']};
+                width: 10px;
+                border-radius: 5px;
+            }}
+            QScrollBar::handle:vertical {{
+                background-color: {DARK_THEME['border']};
+                border-radius: 5px;
+                min-height: 20px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background-color: {DARK_THEME['text_secondary']};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
             }}
         """)
-        connect_btn.clicked.connect(self._connect_to_server)
-        header_layout.addWidget(connect_btn)
+        self.editor.setPlaceholderText("Start writing your notes here...")
+        self.editor.setFont(QFont("Georgia", 14))
+        self.editor.textChanged.connect(self._on_content_changed)
+        self.editor.cursorPositionChanged.connect(self._update_format_buttons)
+        layout.addWidget(self.editor, 1)
 
-        # Refresh button
-        refresh_btn = QPushButton("Refresh")
-        refresh_btn.setStyleSheet(f"""
+        # Word count footer
+        footer = QFrame()
+        footer.setStyleSheet(f"background-color: {DARK_THEME['surface']}; border-top: 1px solid {DARK_THEME['border']};")
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(12, 4, 12, 4)
+
+        self.word_count_label = QLabel("Words: 0 | Characters: 0")
+        self.word_count_label.setStyleSheet(f"color: {DARK_THEME['text_secondary']}; font-size: 11px;")
+        footer_layout.addWidget(self.word_count_label)
+
+        footer_layout.addStretch()
+
+        self.file_label = QLabel("New Document")
+        self.file_label.setStyleSheet(f"color: {DARK_THEME['text_secondary']}; font-size: 11px;")
+        footer_layout.addWidget(self.file_label)
+
+        layout.addWidget(footer)
+
+    def _create_toolbar_btn(self, text, callback, bold=False, italic=False, underline=False, strike=False):
+        """Create a toolbar button with consistent styling."""
+        btn = QPushButton(text)
+        btn.setFixedHeight(26)
+        btn.setMinimumWidth(32)
+
+        font_style = ""
+        if bold:
+            font_style += "font-weight: bold;"
+        if italic:
+            font_style += "font-style: italic;"
+        if underline:
+            font_style += "text-decoration: underline;"
+        if strike:
+            font_style += "text-decoration: line-through;"
+
+        btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {DARK_THEME['surface_light']};
                 color: {DARK_THEME['text_primary']};
-                border-radius: 3px;
-                padding: 4px 12px;
                 border: 1px solid {DARK_THEME['border']};
+                border-radius: 3px;
+                padding: 2px 8px;
+                font-size: 11px;
+                {font_style}
             }}
             QPushButton:hover {{
                 background-color: {DARK_THEME['accent']};
+                border-color: {DARK_THEME['accent']};
+            }}
+            QPushButton:checked {{
+                background-color: {DARK_THEME['accent']};
+                border-color: {DARK_THEME['accent']};
             }}
         """)
-        refresh_btn.clicked.connect(self._refresh_notebook)
-        header_layout.addWidget(refresh_btn)
+        btn.setCheckable(bold or italic or underline or strike)
+        btn.clicked.connect(callback)
+        return btn
 
-        # Auto-start button
-        autostart_btn = QPushButton("Auto Start")
-        autostart_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {DARK_THEME['surface_light']};
-                color: {DARK_THEME['text_primary']};
-                border-radius: 3px;
-                padding: 4px 12px;
-                border: 1px solid {DARK_THEME['border']};
-            }}
-            QPushButton:hover {{
-                background-color: {DARK_THEME['success']};
-            }}
-        """)
-        autostart_btn.clicked.connect(self._start_jupyter_server)
-        header_layout.addWidget(autostart_btn)
+    def _toggle_bold(self):
+        """Toggle bold formatting on selected text."""
+        fmt = QTextCharFormat()
+        cursor = self.editor.textCursor()
+        current_weight = cursor.charFormat().fontWeight()
+        if current_weight == QFont.Weight.Bold:
+            fmt.setFontWeight(QFont.Weight.Normal)
+        else:
+            fmt.setFontWeight(QFont.Weight.Bold)
+        cursor.mergeCharFormat(fmt)
 
-        self.status_label = QLabel("")
-        self.status_label.setStyleSheet(f"color: {DARK_THEME['text_secondary']}; font-size: 11px;")
-        header_layout.addWidget(self.status_label)
+    def _toggle_italic(self):
+        """Toggle italic formatting on selected text."""
+        fmt = QTextCharFormat()
+        cursor = self.editor.textCursor()
+        fmt.setFontItalic(not cursor.charFormat().fontItalic())
+        cursor.mergeCharFormat(fmt)
 
-        layout.addWidget(header)
+    def _toggle_underline(self):
+        """Toggle underline formatting on selected text."""
+        fmt = QTextCharFormat()
+        cursor = self.editor.textCursor()
+        fmt.setFontUnderline(not cursor.charFormat().fontUnderline())
+        cursor.mergeCharFormat(fmt)
 
-        # Browser view for Jupyter
-        self.browser = QWebEngineView()
-        self.browser.setStyleSheet("background-color: #1e1e1e;")
-        layout.addWidget(self.browser, 1)
+    def _toggle_strikethrough(self):
+        """Toggle strikethrough formatting on selected text."""
+        fmt = QTextCharFormat()
+        cursor = self.editor.textCursor()
+        fmt.setFontStrikeOut(not cursor.charFormat().fontStrikeOut())
+        cursor.mergeCharFormat(fmt)
 
-        # Welcome page
-        self._show_welcome_page()
+    def _set_heading(self, level: int):
+        """Set the current paragraph as a heading."""
+        cursor = self.editor.textCursor()
+        cursor.select(QTextCursor.SelectionType.BlockUnderCursor)
 
-    def _show_welcome_page(self):
-        """Show welcome page with instructions."""
-        self.browser.setHtml(f"""
-            <html>
-            <body style="background-color: #1e1e1e; color: #d4d4d4; font-family: sans-serif;
-                         display: flex; justify-content: center; align-items: center; height: 100vh;">
-                <div style="text-align: center; max-width: 600px;">
-                    <h2 style="color: #2196F3;">Jupyter Notebook</h2>
-                    <p>Connect to an existing Jupyter server or start a new one.</p>
+        fmt = QTextCharFormat()
+        sizes = {1: 24, 2: 20, 3: 16}
+        fmt.setFontPointSize(sizes.get(level, 14))
+        fmt.setFontWeight(QFont.Weight.Bold)
 
-                    <div style="background: #2d2d2d; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: left;">
-                        <h3 style="color: #4CAF50; margin-top: 0;">Option 1: Connect to Existing Server</h3>
-                        <p>If you already have Jupyter running, enter the URL above and click Connect.</p>
-                        <code style="background: #1e1e1e; padding: 4px 8px; border-radius: 4px;">http://localhost:8888</code>
-                    </div>
+        cursor.mergeCharFormat(fmt)
 
-                    <div style="background: #2d2d2d; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: left;">
-                        <h3 style="color: #FF9800; margin-top: 0;">Option 2: Start New Server</h3>
-                        <p>Click "Auto Start" to launch a new Jupyter server.</p>
-                        <p style="color: #888; font-size: 12px;">Requires: <code style="background: #1e1e1e; padding: 2px 6px; border-radius: 4px;">pip install jupyter notebook</code></p>
-                    </div>
+    def _set_normal(self):
+        """Set the current paragraph as normal text."""
+        cursor = self.editor.textCursor()
+        cursor.select(QTextCursor.SelectionType.BlockUnderCursor)
 
-                    <div style="background: #2d2d2d; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: left;">
-                        <h3 style="color: #9C27B0; margin-top: 0;">Option 3: Start Manually</h3>
-                        <p>Run in terminal:</p>
-                        <code style="background: #1e1e1e; padding: 8px 12px; border-radius: 4px; display: block; margin-top: 8px;">jupyter notebook --no-browser</code>
-                        <p style="margin-top: 10px;">Then copy the URL and paste it above.</p>
-                    </div>
-                </div>
-            </body>
-            </html>
-        """)
+        fmt = QTextCharFormat()
+        fmt.setFontPointSize(14)
+        fmt.setFontWeight(QFont.Weight.Normal)
 
-    def _connect_to_server(self):
-        """Connect to a Jupyter server URL."""
-        url = self.url_input.text().strip()
-        if not url:
-            self.status_label.setText("Enter a URL")
+        cursor.mergeCharFormat(fmt)
+
+    def _toggle_bullet_list(self):
+        """Toggle bullet list for current selection."""
+        cursor = self.editor.textCursor()
+        current_list = cursor.currentList()
+
+        if current_list and current_list.format().style() == QTextListFormat.Style.ListDisc:
+            # Remove list formatting
+            block_fmt = cursor.blockFormat()
+            block_fmt.setIndent(0)
+            cursor.setBlockFormat(block_fmt)
+        else:
+            # Create bullet list
+            list_fmt = QTextListFormat()
+            list_fmt.setStyle(QTextListFormat.Style.ListDisc)
+            cursor.createList(list_fmt)
+
+    def _toggle_number_list(self):
+        """Toggle numbered list for current selection."""
+        cursor = self.editor.textCursor()
+        current_list = cursor.currentList()
+
+        if current_list and current_list.format().style() == QTextListFormat.Style.ListDecimal:
+            # Remove list formatting
+            block_fmt = cursor.blockFormat()
+            block_fmt.setIndent(0)
+            cursor.setBlockFormat(block_fmt)
+        else:
+            # Create numbered list
+            list_fmt = QTextListFormat()
+            list_fmt.setStyle(QTextListFormat.Style.ListDecimal)
+            cursor.createList(list_fmt)
+
+    def _set_alignment(self, alignment):
+        """Set text alignment for current paragraph."""
+        cursor = self.editor.textCursor()
+        block_fmt = cursor.blockFormat()
+        block_fmt.setAlignment(alignment)
+        cursor.setBlockFormat(block_fmt)
+
+    def _update_format_buttons(self):
+        """Update toolbar button states based on current cursor format."""
+        cursor = self.editor.textCursor()
+        char_fmt = cursor.charFormat()
+
+        self.bold_btn.setChecked(char_fmt.fontWeight() == QFont.Weight.Bold)
+        self.italic_btn.setChecked(char_fmt.fontItalic())
+        self.underline_btn.setChecked(char_fmt.fontUnderline())
+        self.strike_btn.setChecked(char_fmt.fontStrikeOut())
+
+    def _on_content_changed(self):
+        """Handle content changes."""
+        self._is_modified = True
+        self._update_status()
+        self._update_word_count()
+
+    def _update_status(self):
+        """Update status label."""
+        if self._is_modified:
+            self.status_label.setText("Modified")
             self.status_label.setStyleSheet(f"color: {DARK_THEME['warning']}; font-size: 11px;")
-            return
-
-        if not url.startswith("http"):
-            url = "http://" + url
-
-        self.jupyter_url = url
-        self.status_label.setText("Connecting...")
-        self.status_label.setStyleSheet(f"color: {DARK_THEME['accent']}; font-size: 11px;")
-        self.browser.setUrl(QUrl(url))
-
-        # Update status after load
-        self.browser.loadFinished.connect(self._on_load_finished)
-
-    def _on_load_finished(self, success):
-        """Handle page load completion."""
-        if success:
-            self.status_label.setText("Connected")
+        else:
+            self.status_label.setText("Saved")
             self.status_label.setStyleSheet(f"color: {DARK_THEME['success']}; font-size: 11px;")
-        else:
-            self.status_label.setText("Failed to connect")
-            self.status_label.setStyleSheet(f"color: {DARK_THEME['error']}; font-size: 11px;")
 
-    def _start_jupyter_server(self):
-        """Start a Jupyter Notebook server in the background."""
-        import subprocess
-        import threading
-        import sys
+    def _update_word_count(self):
+        """Update word and character count."""
+        text = self.editor.toPlainText()
+        words = len(text.split()) if text.strip() else 0
+        chars = len(text)
+        self.word_count_label.setText(f"Words: {words} | Characters: {chars}")
 
-        self.status_label.setText("Starting server...")
-        self.status_label.setStyleSheet(f"color: {DARK_THEME['warning']}; font-size: 11px;")
+    def _new_document(self):
+        """Create a new document."""
+        if self._is_modified:
+            reply = QMessageBox.question(
+                self,
+                "Save Changes?",
+                "Do you want to save changes before creating a new document?",
+                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel
+            )
+            if reply == QMessageBox.StandardButton.Save:
+                self._save_document()
+            elif reply == QMessageBox.StandardButton.Cancel:
+                return
 
-        def start_server():
+        self.title_input.clear()
+        self.editor.clear()
+        self._current_file = None
+        self._is_modified = False
+        self.file_label.setText("New Document")
+        self._update_status()
+        self.status_label.setText("Ready")
+        self.status_label.setStyleSheet(f"color: {DARK_THEME['text_secondary']}; font-size: 11px;")
+
+    def _open_document(self):
+        """Open an existing document."""
+        if self._is_modified:
+            reply = QMessageBox.question(
+                self,
+                "Save Changes?",
+                "Do you want to save changes before opening another document?",
+                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel
+            )
+            if reply == QMessageBox.StandardButton.Save:
+                self._save_document()
+            elif reply == QMessageBox.StandardButton.Cancel:
+                return
+
+        notes_dir = CONFIG_DIR / "notes"
+        notes_dir.mkdir(parents=True, exist_ok=True)
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Note",
+            str(notes_dir),
+            "HTML Files (*.html);;Text Files (*.txt);;All Files (*)"
+        )
+
+        if file_path:
             try:
-                import socket
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.bind(('', 0))
-                port = sock.getsockname()[1]
-                sock.close()
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
 
-                notebooks_dir = CONFIG_DIR / "notebooks"
-                notebooks_dir.mkdir(parents=True, exist_ok=True)
+                if file_path.endswith('.html'):
+                    self.editor.setHtml(content)
+                else:
+                    self.editor.setPlainText(content)
 
-                python_exe = sys.executable
-
-                self.jupyter_process = subprocess.Popen(
-                    [
-                        python_exe, "-m", "jupyter", "notebook",
-                        "--no-browser",
-                        f"--port={port}",
-                        "--NotebookApp.token=''",
-                        "--NotebookApp.password=''",
-                        f"--notebook-dir={str(notebooks_dir)}",
-                    ],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    cwd=str(notebooks_dir)
-                )
-
-                url = f"http://localhost:{port}"
-                time.sleep(3)
-
-                if self.jupyter_process.poll() is not None:
-                    output = self.jupyter_process.stdout.read() if self.jupyter_process.stdout else ""
-                    QTimer.singleShot(0, lambda: self._on_server_error(f"Failed: {output[:300]}"))
-                    return
-
-                QTimer.singleShot(0, lambda: self._on_server_started(url))
-
+                # Extract title from filename
+                from pathlib import Path
+                self.title_input.setText(Path(file_path).stem)
+                self._current_file = file_path
+                self._is_modified = False
+                self.file_label.setText(Path(file_path).name)
+                self.status_label.setText("Opened")
+                self.status_label.setStyleSheet(f"color: {DARK_THEME['success']}; font-size: 11px;")
             except Exception as e:
-                QTimer.singleShot(0, lambda: self._on_server_error(str(e)))
+                QMessageBox.critical(self, "Error", f"Failed to open file: {str(e)}")
 
-        thread = threading.Thread(target=start_server, daemon=True)
-        thread.start()
+    def _save_document(self):
+        """Save the current document."""
+        notes_dir = CONFIG_DIR / "notes"
+        notes_dir.mkdir(parents=True, exist_ok=True)
 
-    def _on_server_started(self, url):
-        """Called when server starts successfully."""
-        self.jupyter_url = url
-        self.url_input.setText(url)
-        self.status_label.setText("Server running")
-        self.status_label.setStyleSheet(f"color: {DARK_THEME['success']}; font-size: 11px;")
-        self.browser.setUrl(QUrl(url))
-
-    def _on_server_error(self, error_msg: str):
-        """Called when server fails to start."""
-        self.status_label.setText("Error")
-        self.status_label.setStyleSheet(f"color: {DARK_THEME['error']}; font-size: 11px;")
-        self.browser.setHtml(f"""
-            <html>
-            <body style="background-color: #1e1e1e; color: #d4d4d4; font-family: sans-serif;
-                         display: flex; justify-content: center; align-items: center; height: 100vh;">
-                <div style="text-align: center;">
-                    <h2 style="color: #ff6b6b;">Failed to Start Jupyter Server</h2>
-                    <p style="max-width: 500px;">{error_msg}</p>
-                    <p style="color: #888;">Install Jupyter with:</p>
-                    <code style="background: #2d2d2d; padding: 8px 16px; border-radius: 4px;">pip install jupyter notebook</code>
-                </div>
-            </body>
-            </html>
-        """)
-
-    def _refresh_notebook(self):
-        """Refresh the notebook view."""
-        if self.jupyter_url:
-            self.browser.reload()
+        if self._current_file:
+            file_path = self._current_file
         else:
-            self._show_welcome_page()
+            title = self.title_input.text().strip() or "Untitled"
+            default_name = f"{title}.html"
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save Note",
+                str(notes_dir / default_name),
+                "HTML Files (*.html);;Text Files (*.txt)"
+            )
 
-    def _cleanup(self):
-        """Clean up Jupyter server resources."""
-        if self.jupyter_process:
+        if file_path:
             try:
-                self.jupyter_process.terminate()
-                self.jupyter_process.wait(timeout=5)
-            except Exception:
-                try:
-                    self.jupyter_process.kill()
-                except Exception:
-                    pass
-            self.jupyter_process = None
-        self.jupyter_url = None
+                content = self.editor.toHtml() if file_path.endswith('.html') else self.editor.toPlainText()
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
 
-    def closeEvent(self, event):
-        """Clean up when closing."""
-        self._cleanup()
-        super().closeEvent(event)
+                self._current_file = file_path
+                self._is_modified = False
+                from pathlib import Path
+                self.file_label.setText(Path(file_path).name)
+                self.status_label.setText("Saved")
+                self.status_label.setStyleSheet(f"color: {DARK_THEME['success']}; font-size: 11px;")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to save file: {str(e)}")
 
 
 class BrowserTabs(QWidget):
-    """Tabbed widget containing embedded browser views, logs, and Jupyter notebook."""
+    """Tabbed widget containing embedded browser views, logs, and notebook."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.platform_tabs: Dict[str, PlatformTab] = {}
         self.log_tab: Optional[LogTab] = None
-        self.jupyter_tab: Optional[JupyterNotebookTab] = None
+        self.notebook_tab: Optional[MarkdownNotebookTab] = None
 
         self._setup_ui()
 
@@ -1896,9 +2078,9 @@ class BrowserTabs(QWidget):
             self.platform_tabs[platform] = tab
             self.tabs.addTab(tab, platform_names.get(platform, platform.title()))
 
-        # Add Jupyter Notebook tab
-        self.jupyter_tab = JupyterNotebookTab()
-        self.tabs.addTab(self.jupyter_tab, "Notebook")
+        # Add Markdown Notebook tab
+        self.notebook_tab = MarkdownNotebookTab()
+        self.tabs.addTab(self.notebook_tab, "Notebook")
 
         # Add Log tab at the end
         self.log_tab = LogTab()
@@ -1933,7 +2115,7 @@ class BrowserTabs(QWidget):
         self.tabs.setCurrentIndex(len(self.platform_tabs) + 1)
 
     def show_notebook_tab(self):
-        """Switch to the Jupyter notebook tab."""
+        """Switch to the notebook tab."""
         self.tabs.setCurrentIndex(len(self.platform_tabs))
 
     def clear_logs(self):

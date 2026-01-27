@@ -2,7 +2,7 @@
 
 from typing import List
 
-from PyQt6.QtCore import Qt, pyqtSignal, QRect, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QRect, QTimer, QPropertyAnimation, QPoint, QEasingCurve
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QPainter, QColor, QPen, QPolygon
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -103,15 +103,22 @@ class ItemsPanel(QWidget):
         self.items: List = []
         self.item_buttons: List[ItemButton] = []
         self.selected_items: List = []
+
+        # Drag state - SortableJS-inspired
         self._dragged_item = None
         self._dragged_button = None
         self._drop_placeholder = None
         self._drop_target_index = -1
         self._original_index = -1
+        self._animations = []
+        self._captured_positions = {}  # Store positions before animation
+        self._last_swap_index = -1  # Prevent jittery swaps
+        self._swap_threshold = 0.55  # 55% threshold like SortableJS
+        self._last_direction = 0  # Track drag direction
 
-        # Dynamic sizing for 3 columns
-        self._num_columns = 3
-        self._pill_spacing = 6
+        # Dynamic sizing for 2 columns
+        self._num_columns = 2
+        self._pill_spacing = 8
         self._pill_margin = 8
         self._pill_height = 36
         self._pill_width = 200  # Default, will be recalculated
@@ -387,7 +394,7 @@ class ItemsPanel(QWidget):
         self._apply_filters()
 
     def _calculate_pill_width(self):
-        """Calculate pill width based on available container width for 3 columns."""
+        """Calculate pill width based on available container width for 2 columns."""
         # Get width from scroll area viewport
         available_width = 0
         try:
@@ -402,14 +409,14 @@ class ItemsPanel(QWidget):
             available_width = 600  # Default fallback
 
         # Subtract margins and scrollbar space
-        available_width = available_width - (self._pill_margin * 2) - 15
+        available_width = available_width - (self._pill_margin * 2) - 12
 
-        # Calculate width for 3 columns with spacing
+        # Calculate width for 2 columns with spacing
         total_spacing = self._pill_spacing * (self._num_columns - 1)
         self._pill_width = int((available_width - total_spacing) / self._num_columns)
 
-        # Ensure reasonable bounds
-        self._pill_width = max(100, min(300, self._pill_width))
+        # Ensure reasonable bounds for 2 columns
+        self._pill_width = max(150, min(400, self._pill_width))
 
     def resizeEvent(self, event):
         """Recalculate pill sizes when container is resized."""
@@ -534,20 +541,30 @@ class ItemsPanel(QWidget):
             self.deleteSelectedRequested.emit(self.selected_items.copy())
 
     def _on_drag_started(self, item):
-        """Handle drag start from an item button."""
+        """Handle drag start - capture animation state like SortableJS."""
         self._dragged_item = item
+        self._animations = []
+        self._last_swap_index = -1
+        self._last_direction = 0
+
+        # Capture current positions of all buttons (SortableJS captureAnimationState)
+        self._captured_positions = {}
+        for btn in self.item_buttons:
+            self._captured_positions[btn] = btn.pos()
 
         for i, btn in enumerate(self.item_buttons):
             if btn.item.id == item.id:
                 self._dragged_button = btn
                 self._original_index = i
                 self._drop_target_index = i
+
                 # Create ghost placeholder with same size as pills
                 self._create_drop_placeholder()
-                self._drop_placeholder.move(btn.geometry().topLeft())
+                self._drop_placeholder.move(btn.pos())
                 self._drop_placeholder.show()
                 self._drop_placeholder.raise_()
-                # Hide the dragged button (ghost takes its place)
+
+                # Hide the dragged button
                 btn.hide()
                 break
 
@@ -560,9 +577,17 @@ class ItemsPanel(QWidget):
 
     def _remove_drop_placeholder(self):
         """Hide and clean up the drop placeholder."""
+        # Stop all animations gracefully
+        for anim in self._animations:
+            anim.stop()
+        self._animations = []
+
         if self._drop_placeholder:
             self._drop_placeholder.hide()
+
         self._drop_target_index = -1
+        self._last_swap_index = -1
+        self._captured_positions = {}
 
         if self._dragged_button:
             self._dragged_button.show()
@@ -577,20 +602,24 @@ class ItemsPanel(QWidget):
             event.ignore()
 
     def dragMoveEvent(self, event):
-        """Handle drag movement - show ghost at target position, shift other items."""
-        if event.mimeData().hasFormat("application/x-researchbot-item"):
-            drop_pos = event.position().toPoint()
-            target_index = self._find_drop_index(drop_pos)
-            if target_index != self._drop_target_index:
-                self._shift_items_for_drop(target_index)
-            event.acceptProposedAction()
-        else:
+        """Handle drag movement with SortableJS-like swap threshold."""
+        if not event.mimeData().hasFormat("application/x-researchbot-item"):
             event.ignore()
+            return
+
+        drop_pos = event.position().toPoint()
+        target_index = self._find_drop_index_with_threshold(drop_pos)
+
+        # Only animate if target changed and passes threshold check
+        if target_index != self._drop_target_index and target_index >= 0:
+            self._animate_items_for_drop(target_index)
+
+        event.acceptProposedAction()
 
     def dragLeaveEvent(self, event):
         """When drag leaves, restore original positions."""
-        if self._original_index is not None:
-            self._shift_items_for_drop(self._original_index)
+        if self._original_index is not None and self._original_index >= 0:
+            self._animate_items_for_drop(self._original_index)
         event.accept()
 
     def dropEvent(self, event: QDropEvent):
@@ -606,133 +635,141 @@ class ItemsPanel(QWidget):
             return
 
         target_index = self._drop_target_index
+        original_index = self._original_index
 
         self._remove_drop_placeholder()
 
         # Reorder if dropped at a different position
-        if target_index >= 0 and target_index != self._original_index:
+        if target_index >= 0 and target_index != original_index:
             self._reorder_item(self._dragged_item, target_index)
         else:
-            # Show the button again at original position
-            if self._dragged_button:
-                self._dragged_button.show()
+            # Rebuild to restore positions
+            self._rebuild_buttons()
 
         self._dragged_item = None
         self._dragged_button = None
         self._original_index = -1
         event.acceptProposedAction()
 
-    def _find_drop_index(self, pos) -> int:
-        """Find the index where the item should be inserted based on cursor position over pills."""
+    def _find_drop_index_with_threshold(self, pos) -> int:
+        """Find drop index using SortableJS-like swap threshold logic."""
         scroll_widget_pos = self.scroll_area.mapFromParent(pos)
         scroll_pos = self.scroll_area.widget().mapFromParent(scroll_widget_pos)
 
-        # Find which pill the cursor is over
-        for i, btn in enumerate(self.item_buttons):
-            if btn == self._dragged_button:
-                continue
+        # Get visible buttons (excluding dragged)
+        visible_buttons = [(i, btn) for i, btn in enumerate(self.item_buttons)
+                          if btn != self._dragged_button and btn.isVisible()]
 
+        if not visible_buttons:
+            return 0
+
+        # Check each button with threshold
+        for i, btn in visible_buttons:
             btn_rect = btn.geometry()
 
-            # Check if cursor is within this button's area (with some padding)
-            if (btn_rect.left() - 5 <= scroll_pos.x() <= btn_rect.right() + 5 and
-                btn_rect.top() - 5 <= scroll_pos.y() <= btn_rect.bottom() + 5):
-                # Cursor is over this pill - this is where we want to drop
+            if not btn_rect.contains(scroll_pos):
+                continue
+
+            # Calculate position within button (0.0 to 1.0)
+            relative_x = (scroll_pos.x() - btn_rect.x()) / btn_rect.width()
+            relative_y = (scroll_pos.y() - btn_rect.y()) / btn_rect.height()
+
+            # Determine direction based on original position
+            if self._original_index < i:
+                # Dragging forward - need to cross threshold from left
+                if relative_x > self._swap_threshold:
+                    return i
+            elif self._original_index > i:
+                # Dragging backward - need to cross threshold from right
+                if relative_x < (1 - self._swap_threshold):
+                    return i
+            else:
                 return i
 
-        # If not over any pill, use grid-based calculation for empty areas
+            # If within threshold but not crossed, keep current target
+            return self._drop_target_index if self._drop_target_index >= 0 else self._original_index
+
+        # Grid-based fallback for empty areas
         cell_width = self._pill_width + self._pill_spacing
         cell_height = self._pill_height + self._pill_spacing
 
-        col = max(0, int((scroll_pos.x() - self._pill_margin) // cell_width))
-        row = max(0, int((scroll_pos.y() - self._pill_margin) // cell_height))
-
+        col = max(0, int((scroll_pos.x() - self._pill_margin) / cell_width))
+        row = max(0, int((scroll_pos.y() - self._pill_margin) / cell_height))
         col = min(col, self._num_columns - 1)
 
-        target_index = int(row * self._num_columns + col)
+        target_index = row * self._num_columns + col
         total_items = len(self.item_buttons)
-        target_index = max(0, min(target_index, total_items))
 
-        return target_index
+        return max(0, min(target_index, total_items - 1))
 
-    def _shift_items_for_drop(self, target_index: int):
-        """Shift items and move ghost placeholder to show drop position."""
+    def _animate_items_for_drop(self, target_index: int):
+        """Animate items shifting with SortableJS-like smooth transitions."""
         if not self._drop_placeholder or self._original_index is None:
             return
 
-        self._drop_target_index = target_index
-
-        # Get all buttons except the dragged one
-        visible_buttons = [btn for btn in self.item_buttons if btn != self._dragged_button]
-
-        if not visible_buttons:
-            self._drop_placeholder.move(self._pill_margin, self._pill_margin)
+        # Prevent rapid back-and-forth by checking if we just swapped
+        if target_index == self._last_swap_index:
             return
 
-        # Use consistent dimensions
+        self._drop_target_index = target_index
+        self._last_swap_index = target_index
+
+        # Stop existing animations
+        for anim in self._animations:
+            anim.stop()
+        self._animations = []
+
+        # Calculate grid positions
         pill_width = self._pill_width
         pill_height = self._pill_height
         spacing = self._pill_spacing
         margin = self._pill_margin
         num_cols = self._num_columns
 
-        # Calculate max row width
-        max_width = (pill_width * num_cols) + (spacing * (num_cols - 1)) + (margin * 2)
+        def get_grid_pos(slot):
+            """Get x, y position for a grid slot."""
+            row = slot // num_cols
+            col = slot % num_cols
+            x = margin + col * (pill_width + spacing)
+            y = margin + row * (pill_height + spacing)
+            return x, y
 
-        x = margin
-        y = margin
-        col = 0
+        # Build list of non-dragged buttons
+        other_buttons = [btn for btn in self.item_buttons if btn != self._dragged_button]
 
-        button_positions = []
-        ghost_position = None
-        current_index = 0
+        # Assign slots - ghost placeholder takes target_index slot
+        ghost_x, ghost_y = get_grid_pos(target_index)
 
-        for btn in self.item_buttons:
-            if btn == self._dragged_button:
-                continue
+        # Animate ghost placeholder
+        ghost_anim = QPropertyAnimation(self._drop_placeholder, b"pos")
+        ghost_anim.setDuration(125)  # Slightly faster for responsiveness
+        ghost_anim.setEasingCurve(QEasingCurve.Type.OutQuad)
+        ghost_anim.setEndValue(QPoint(ghost_x, ghost_y))
+        ghost_anim.start()
+        self._animations.append(ghost_anim)
+        self._drop_placeholder.show()
+        self._drop_placeholder.raise_()
 
-            # Check if ghost should go here
-            actual_index = current_index
-            if self._original_index is not None and current_index >= self._original_index:
-                actual_index = current_index + 1
+        # Assign positions to other buttons, skipping the ghost slot
+        slot = 0
+        for btn in other_buttons:
+            # Skip the slot reserved for ghost
+            if slot == target_index:
+                slot += 1
 
-            if actual_index == target_index and ghost_position is None:
-                # Place ghost here
-                if col >= num_cols:
-                    x = margin
-                    y += pill_height + spacing
-                    col = 0
-                ghost_position = (x, y)
-                x += pill_width + spacing
-                col += 1
+            target_x, target_y = get_grid_pos(slot)
+            current_pos = btn.pos()
 
-            # Place button
-            if col >= num_cols:
-                x = margin
-                y += pill_height + spacing
-                col = 0
+            # Only animate if position changed
+            if current_pos.x() != target_x or current_pos.y() != target_y:
+                anim = QPropertyAnimation(btn, b"pos")
+                anim.setDuration(125)
+                anim.setEasingCurve(QEasingCurve.Type.OutQuad)
+                anim.setEndValue(QPoint(target_x, target_y))
+                anim.start()
+                self._animations.append(anim)
 
-            button_positions.append((btn, x, y))
-            x += pill_width + spacing
-            col += 1
-            current_index += 1
-
-        # If ghost should be at the end
-        if ghost_position is None:
-            if col >= num_cols:
-                x = margin
-                y += pill_height + spacing
-            ghost_position = (x, y)
-
-        # Move ghost placeholder
-        if ghost_position:
-            self._drop_placeholder.move(ghost_position[0], ghost_position[1])
-            self._drop_placeholder.show()
-            self._drop_placeholder.raise_()
-
-        # Move buttons to their new positions
-        for btn, bx, by in button_positions:
-            btn.move(bx, by)
+            slot += 1
 
     def _reorder_item(self, item, new_index: int):
         """Reorder an item to a new position."""
