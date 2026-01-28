@@ -1,12 +1,14 @@
 """Sidebar tabs widget with embedded browser views, logs, and markdown notebook."""
 
+import os
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Optional
 
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal, QTimer, QEvent
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEnginePage
+from PyQt6.QtWebEngineCore import QWebEngineDownloadRequest, QWebEngineProfile, QWebEnginePage
 from PyQt6.QtWidgets import (
     QFileDialog,
     QFrame,
@@ -15,7 +17,9 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
+    QScrollArea,
     QTabWidget,
     QTextEdit,
     QToolBar,
@@ -42,6 +46,10 @@ class BrowserPage(QWebEnginePage):
         """Handle requests to open links in new windows by navigating in the same view."""
         return self._browser_view
 
+    def acceptNavigationRequest(self, url, nav_type, is_main_frame):
+        """Accept all navigation requests including downloads."""
+        return True
+
 
 class PlatformBrowser(QWebEngineView):
     """Embedded browser for a platform."""
@@ -57,6 +65,10 @@ class PlatformBrowser(QWebEngineView):
         self.platform = platform
         self._setup_browser()
 
+    # Class-level list of listeners for download events
+    _download_listeners = []
+    _download_directory = str(Path.home() / "Downloads")
+
     @classmethod
     def get_shared_profile(cls):
         """Get or create shared profile with persistent storage."""
@@ -69,7 +81,76 @@ class PlatformBrowser(QWebEngineView):
             cls._shared_profile.setPersistentCookiesPolicy(
                 QWebEngineProfile.PersistentCookiesPolicy.AllowPersistentCookies
             )
+
+            # Connect download handler so file downloads work
+            cls._shared_profile.downloadRequested.connect(cls._on_download_requested)
         return cls._shared_profile
+
+    @classmethod
+    def add_download_listener(cls, listener):
+        """Register a callback for download events: listener(filename, state)."""
+        cls._download_listeners.append(listener)
+
+    @classmethod
+    def set_download_directory(cls, path: str):
+        """Set the download directory."""
+        cls._download_directory = path
+
+    @classmethod
+    def get_download_directory(cls) -> str:
+        """Get the current download directory."""
+        return cls._download_directory
+
+    @classmethod
+    def _on_download_requested(cls, download: QWebEngineDownloadRequest):
+        """Handle file download requests by saving to the configured folder."""
+        downloads_dir = Path(cls._download_directory)
+        downloads_dir.mkdir(parents=True, exist_ok=True)
+
+        suggested_name = download.downloadFileName()
+        save_path = downloads_dir / suggested_name
+
+        # Avoid overwriting by appending a number
+        counter = 1
+        stem = save_path.stem
+        suffix = save_path.suffix
+        while save_path.exists():
+            save_path = downloads_dir / f"{stem} ({counter}){suffix}"
+            counter += 1
+
+        download.setDownloadDirectory(str(downloads_dir))
+        download.setDownloadFileName(save_path.name)
+
+        filename = save_path.name
+
+        # Notify listeners of download start
+        for listener in cls._download_listeners:
+            listener(filename, "started", 0)
+
+        def on_progress(bytes_received, bytes_total):
+            if bytes_total > 0:
+                percent = int(bytes_received * 100 / bytes_total)
+            else:
+                percent = -1  # Unknown total size
+            for cb in cls._download_listeners:
+                cb(filename, "progress", percent)
+
+        def on_state_changed(state):
+            if state == QWebEngineDownloadRequest.DownloadState.DownloadCompleted:
+                for cb in cls._download_listeners:
+                    cb(filename, "completed", 100)
+            elif state == QWebEngineDownloadRequest.DownloadState.DownloadCancelled:
+                for cb in cls._download_listeners:
+                    cb(filename, "cancelled", 0)
+            elif state == QWebEngineDownloadRequest.DownloadState.DownloadInterrupted:
+                for cb in cls._download_listeners:
+                    cb(filename, "failed", 0)
+
+        download.receivedBytesChanged.connect(
+            lambda: on_progress(download.receivedBytes(), download.totalBytes())
+        )
+        download.stateChanged.connect(on_state_changed)
+        download.accept()
 
     def _setup_browser(self):
         """Configure the browser with persistent storage."""
@@ -1477,6 +1558,56 @@ class PlatformTab(QWidget):
             self.browser.urlChanged.connect(self._on_url_changed)
         layout.addWidget(self.browser, 1)
 
+        # Download notification bar (hidden by default)
+        self.download_bar = QFrame()
+        self.download_bar.setFixedHeight(32)
+        self.download_bar.setStyleSheet(f"""
+            QFrame {{
+                background-color: {DARK_THEME['surface']};
+                border-top: 1px solid {DARK_THEME['border']};
+            }}
+        """)
+        download_bar_layout = QHBoxLayout(self.download_bar)
+        download_bar_layout.setContentsMargins(12, 4, 12, 4)
+        download_bar_layout.setSpacing(8)
+
+        self.download_icon = QLabel()
+        self.download_icon.setFixedSize(16, 16)
+        download_bar_layout.addWidget(self.download_icon)
+
+        self.download_label = QLabel("")
+        self.download_label.setStyleSheet(f"font-size: 11px; color: {DARK_THEME['text_primary']};")
+        download_bar_layout.addWidget(self.download_label, 1)
+
+        self.download_close_btn = QPushButton("x")
+        self.download_close_btn.setFixedSize(20, 20)
+        self.download_close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.download_close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {DARK_THEME['text_secondary']};
+                border: none;
+                font-size: 12px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                color: {DARK_THEME['text_primary']};
+            }}
+        """)
+        self.download_close_btn.clicked.connect(self.download_bar.hide)
+        download_bar_layout.addWidget(self.download_close_btn)
+
+        self.download_bar.hide()
+        layout.addWidget(self.download_bar)
+
+        # Register for download notifications
+        PlatformBrowser.add_download_listener(self._on_download_event)
+
+        # Timer to auto-hide download bar
+        self._download_hide_timer = QTimer()
+        self._download_hide_timer.setSingleShot(True)
+        self._download_hide_timer.timeout.connect(self.download_bar.hide)
+
         # Navigate to the platform URL
         self.browser.navigate(self.url)
 
@@ -1524,6 +1655,40 @@ class PlatformTab(QWidget):
         """Update URL bar when browser URL changes."""
         if hasattr(self, 'url_input'):
             self.url_input.setText(url.toString())
+
+    def _on_download_event(self, filename: str, state: str, percent: int):
+        """Show download status in the notification bar."""
+        if state == "started":
+            self.download_icon.setStyleSheet("background-color: #2196F3; border-radius: 8px;")
+            self.download_label.setText(f"Downloading: {filename} (0%)")
+            self.download_label.setStyleSheet(f"font-size: 11px; color: {DARK_THEME['text_primary']};")
+            self._download_hide_timer.stop()
+            self.download_bar.show()
+        elif state == "progress":
+            self.download_icon.setStyleSheet("background-color: #2196F3; border-radius: 8px;")
+            if percent >= 0:
+                self.download_label.setText(f"Downloading: {filename} ({percent}%)")
+            else:
+                self.download_label.setText(f"Downloading: {filename}...")
+            self.download_label.setStyleSheet(f"font-size: 11px; color: {DARK_THEME['text_primary']};")
+        elif state == "completed":
+            self.download_icon.setStyleSheet("background-color: #4CAF50; border-radius: 8px;")
+            self.download_label.setText(f"Downloaded: {filename}")
+            self.download_label.setStyleSheet("font-size: 11px; color: #4CAF50;")
+            self.download_bar.show()
+            self._download_hide_timer.start(5000)
+        elif state == "failed":
+            self.download_icon.setStyleSheet("background-color: #F44336; border-radius: 8px;")
+            self.download_label.setText(f"Download failed: {filename}")
+            self.download_label.setStyleSheet("font-size: 11px; color: #F44336;")
+            self.download_bar.show()
+            self._download_hide_timer.start(8000)
+        elif state == "cancelled":
+            self.download_icon.setStyleSheet("background-color: #FF9800; border-radius: 8px;")
+            self.download_label.setText(f"Download cancelled: {filename}")
+            self.download_label.setStyleSheet("font-size: 11px; color: #FF9800;")
+            self.download_bar.show()
+            self._download_hide_timer.start(5000)
 
     def _clear_browser_data(self):
         """Clear cookies and browser data for this profile."""
@@ -2413,6 +2578,347 @@ class MarkdownNotebookTab(QWidget):
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to save file: {str(e)}")
 
+class DownloadEntry(QFrame):
+    """Single download item widget showing filename, progress, and actions."""
+
+    def __init__(self, filename: str, directory: str, parent=None):
+        super().__init__(parent)
+        self.filename = filename
+        self.directory = directory
+        self.filepath = os.path.join(directory, filename)
+
+        self.setFixedHeight(48)
+        self.setStyleSheet(f"""
+            QFrame {{
+                background-color: {DARK_THEME['surface']};
+                border-radius: 4px;
+                border: 1px solid {DARK_THEME['border']};
+            }}
+        """)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(8)
+
+        # Status icon
+        self.status_icon = QLabel()
+        self.status_icon.setFixedSize(12, 12)
+        self.status_icon.setStyleSheet("background-color: #2196F3; border-radius: 6px; border: none;")
+        layout.addWidget(self.status_icon)
+
+        # Info column
+        info_layout = QVBoxLayout()
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.setSpacing(2)
+
+        self.name_label = QLabel(filename)
+        self.name_label.setStyleSheet(f"font-size: 11px; font-weight: bold; color: {DARK_THEME['text_primary']}; border: none;")
+        info_layout.addWidget(self.name_label)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedHeight(4)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: {DARK_THEME['background']};
+                border: none;
+                border-radius: 2px;
+            }}
+            QProgressBar::chunk {{
+                background-color: #2196F3;
+                border-radius: 2px;
+            }}
+        """)
+        info_layout.addWidget(self.progress_bar)
+
+        self.status_label = QLabel("Downloading... 0%")
+        self.status_label.setStyleSheet(f"font-size: 10px; color: {DARK_THEME['text_secondary']}; border: none;")
+        info_layout.addWidget(self.status_label)
+
+        layout.addLayout(info_layout, 1)
+
+        # Action buttons
+        btn_style = f"""
+            QPushButton {{
+                background-color: {DARK_THEME['surface_light']};
+                color: {DARK_THEME['text_primary']};
+                border: 1px solid {DARK_THEME['border']};
+                border-radius: 3px;
+                padding: 2px 8px;
+                font-size: 10px;
+            }}
+            QPushButton:hover {{
+                background-color: {DARK_THEME['accent']};
+                border-color: {DARK_THEME['accent']};
+            }}
+        """
+
+        self.open_file_btn = QPushButton("Open")
+        self.open_file_btn.setFixedHeight(22)
+        self.open_file_btn.setStyleSheet(btn_style)
+        self.open_file_btn.clicked.connect(self._open_file)
+        self.open_file_btn.hide()
+        layout.addWidget(self.open_file_btn)
+
+        self.open_folder_btn = QPushButton("Folder")
+        self.open_folder_btn.setFixedHeight(22)
+        self.open_folder_btn.setStyleSheet(btn_style)
+        self.open_folder_btn.clicked.connect(self._open_folder)
+        self.open_folder_btn.hide()
+        layout.addWidget(self.open_folder_btn)
+
+    def update_progress(self, percent: int):
+        """Update the progress bar and label."""
+        if percent >= 0:
+            self.progress_bar.setValue(percent)
+            self.status_label.setText(f"Downloading... {percent}%")
+        else:
+            self.progress_bar.setRange(0, 0)  # Indeterminate
+            self.status_label.setText("Downloading...")
+
+    def set_completed(self):
+        """Mark as completed."""
+        self.progress_bar.setValue(100)
+        self.progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: {DARK_THEME['background']};
+                border: none;
+                border-radius: 2px;
+            }}
+            QProgressBar::chunk {{
+                background-color: #4CAF50;
+                border-radius: 2px;
+            }}
+        """)
+        self.status_icon.setStyleSheet("background-color: #4CAF50; border-radius: 6px; border: none;")
+        self.status_label.setText("Completed")
+        self.status_label.setStyleSheet("font-size: 10px; color: #4CAF50; border: none;")
+        self.open_file_btn.show()
+        self.open_folder_btn.show()
+
+    def set_failed(self):
+        """Mark as failed."""
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: {DARK_THEME['background']};
+                border: none;
+                border-radius: 2px;
+            }}
+            QProgressBar::chunk {{
+                background-color: #F44336;
+                border-radius: 2px;
+            }}
+        """)
+        self.status_icon.setStyleSheet("background-color: #F44336; border-radius: 6px; border: none;")
+        self.status_label.setText("Failed")
+        self.status_label.setStyleSheet("font-size: 10px; color: #F44336; border: none;")
+        self.open_folder_btn.show()
+
+    def set_cancelled(self):
+        """Mark as cancelled."""
+        self.progress_bar.setRange(0, 100)
+        self.status_icon.setStyleSheet("background-color: #FF9800; border-radius: 6px; border: none;")
+        self.status_label.setText("Cancelled")
+        self.status_label.setStyleSheet("font-size: 10px; color: #FF9800; border: none;")
+
+    def _open_file(self):
+        """Open the downloaded file with the system default app."""
+        import subprocess
+        if os.path.exists(self.filepath):
+            subprocess.Popen(["open", self.filepath])
+
+    def _open_folder(self):
+        """Reveal the file in Finder."""
+        import subprocess
+        if os.path.exists(self.filepath):
+            subprocess.Popen(["open", "-R", self.filepath])
+        elif os.path.isdir(self.directory):
+            subprocess.Popen(["open", self.directory])
+
+
+class DownloadsTab(QWidget):
+    """Downloads manager tab with list of downloads and folder settings."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._entries: Dict[str, DownloadEntry] = {}
+        self._setup_ui()
+        PlatformBrowser.add_download_listener(self._on_download_event)
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Header
+        header = QFrame()
+        header.setStyleSheet(f"background-color: {DARK_THEME['surface']};")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(12, 8, 12, 8)
+
+        title = QLabel("Downloads")
+        title.setStyleSheet(f"color: {DARK_THEME['text_primary']}; font-weight: bold;")
+        header_layout.addWidget(title)
+
+        header_layout.addStretch()
+
+        change_folder_btn = QPushButton("Change Folder")
+        change_folder_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DARK_THEME['surface_light']};
+                color: {DARK_THEME['text_primary']};
+                border: 1px solid {DARK_THEME['border']};
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-size: 11px;
+            }}
+            QPushButton:hover {{
+                background-color: {DARK_THEME['accent']};
+                border-color: {DARK_THEME['accent']};
+            }}
+        """)
+        change_folder_btn.clicked.connect(self._change_folder)
+        header_layout.addWidget(change_folder_btn)
+
+        clear_btn = QPushButton("Clear")
+        clear_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DARK_THEME['surface_light']};
+                color: {DARK_THEME['text_primary']};
+                border: 1px solid {DARK_THEME['border']};
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-size: 11px;
+            }}
+            QPushButton:hover {{
+                background-color: {DARK_THEME['accent']};
+                border-color: {DARK_THEME['accent']};
+            }}
+        """)
+        clear_btn.clicked.connect(self._clear_all)
+        header_layout.addWidget(clear_btn)
+
+        layout.addWidget(header)
+
+        # Folder path display
+        folder_frame = QFrame()
+        folder_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {DARK_THEME['background']};
+                border-bottom: 1px solid {DARK_THEME['border']};
+            }}
+        """)
+        folder_layout = QHBoxLayout(folder_frame)
+        folder_layout.setContentsMargins(12, 6, 12, 6)
+
+        folder_icon = QLabel("Folder:")
+        folder_icon.setStyleSheet(f"font-size: 11px; color: {DARK_THEME['text_secondary']};")
+        folder_layout.addWidget(folder_icon)
+
+        self.folder_label = QLabel(PlatformBrowser.get_download_directory())
+        self.folder_label.setStyleSheet(f"font-size: 11px; color: {DARK_THEME['text_primary']};")
+        folder_layout.addWidget(self.folder_label, 1)
+
+        layout.addWidget(folder_frame)
+
+        # Scroll area for download entries
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll_area.setStyleSheet(f"""
+            QScrollArea {{
+                border: none;
+                background-color: {DARK_THEME['background']};
+            }}
+            QScrollBar:vertical {{
+                background-color: {DARK_THEME['surface']};
+                width: 8px;
+                border-radius: 4px;
+            }}
+            QScrollBar::handle:vertical {{
+                background-color: {DARK_THEME['border']};
+                border-radius: 4px;
+                min-height: 20px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background-color: {DARK_THEME['text_secondary']};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+        """)
+
+        self.scroll_content = QWidget()
+        self.scroll_content.setStyleSheet(f"background-color: {DARK_THEME['background']};")
+        self.entries_layout = QVBoxLayout(self.scroll_content)
+        self.entries_layout.setContentsMargins(8, 8, 8, 8)
+        self.entries_layout.setSpacing(6)
+        self.entries_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        # Empty state label
+        self.empty_label = QLabel("No downloads yet")
+        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_label.setStyleSheet(f"color: {DARK_THEME['text_secondary']}; font-size: 12px; padding: 40px;")
+        self.entries_layout.addWidget(self.empty_label)
+
+        self.scroll_area.setWidget(self.scroll_content)
+        layout.addWidget(self.scroll_area, 1)
+
+    def _on_download_event(self, filename: str, state: str, percent: int):
+        """Handle download events and update the list."""
+        if state == "started":
+            # Hide the empty label
+            self.empty_label.hide()
+
+            directory = PlatformBrowser.get_download_directory()
+            entry = DownloadEntry(filename, directory)
+            self._entries[filename] = entry
+            # Insert at top (index 0)
+            self.entries_layout.insertWidget(0, entry)
+
+        elif state == "progress" and filename in self._entries:
+            self._entries[filename].update_progress(percent)
+
+        elif state == "completed" and filename in self._entries:
+            self._entries[filename].set_completed()
+
+        elif state == "failed" and filename in self._entries:
+            self._entries[filename].set_failed()
+
+        elif state == "cancelled" and filename in self._entries:
+            self._entries[filename].set_cancelled()
+
+    def _change_folder(self):
+        """Open folder picker to change download directory."""
+        current = PlatformBrowser.get_download_directory()
+        folder = QFileDialog.getExistingDirectory(self, "Select Download Folder", current)
+        if folder:
+            PlatformBrowser.set_download_directory(folder)
+            self.folder_label.setText(folder)
+            # Persist the setting
+            settings_file = CONFIG_DIR / "download_settings.txt"
+            settings_file.write_text(folder)
+
+    def _clear_all(self):
+        """Remove all download entries from the list."""
+        for entry in self._entries.values():
+            entry.deleteLater()
+        self._entries.clear()
+        self.empty_label.show()
+
+    def load_saved_directory(self):
+        """Load the saved download directory from config."""
+        settings_file = CONFIG_DIR / "download_settings.txt"
+        if settings_file.exists():
+            saved_dir = settings_file.read_text().strip()
+            if saved_dir and os.path.isdir(saved_dir):
+                PlatformBrowser.set_download_directory(saved_dir)
+                self.folder_label.setText(saved_dir)
+
+
 class BrowserTabs(QWidget):
     """Tabbed widget containing embedded browser views, logs, and notebook."""
 
@@ -2471,6 +2977,11 @@ class BrowserTabs(QWidget):
         self.notebook_tab = MarkdownNotebookTab()
         self.tabs.addTab(self.notebook_tab, "Notebook")
 
+        # Add Downloads tab
+        self.downloads_tab = DownloadsTab()
+        self.downloads_tab.load_saved_directory()
+        self.tabs.addTab(self.downloads_tab, "Downloads")
+
         # Add Log tab at the end
         self.log_tab = LogTab()
         self.tabs.addTab(self.log_tab, "Log")
@@ -2501,11 +3012,15 @@ class BrowserTabs(QWidget):
 
     def show_log_tab(self):
         """Switch to the log tab (at the end)."""
-        self.tabs.setCurrentIndex(len(self.platform_tabs) + 1)
+        self.tabs.setCurrentIndex(len(self.platform_tabs) + 2)
 
     def show_notebook_tab(self):
         """Switch to the notebook tab."""
         self.tabs.setCurrentIndex(len(self.platform_tabs))
+
+    def show_downloads_tab(self):
+        """Switch to the downloads tab."""
+        self.tabs.setCurrentIndex(len(self.platform_tabs) + 1)
 
     def clear_logs(self):
         """Clear the log output."""
