@@ -471,7 +471,8 @@ class MainWindow(QMainWindow):
 
         splitter.addWidget(right_widget)
 
-        splitter.setSizes([WINDOW_WIDTH // 2, WINDOW_WIDTH // 2])
+        # Left side (workspace) gets 1/3, right side (browsers) gets 2/3
+        splitter.setSizes([WINDOW_WIDTH // 3, WINDOW_WIDTH * 2 // 3])
 
         main_layout.addWidget(splitter)
 

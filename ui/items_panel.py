@@ -590,8 +590,11 @@ class ItemsPanel(QWidget):
         self._captured_positions = {}
 
         if self._dragged_button:
-            self._dragged_button.show()
-            self._dragged_button._update_styles()
+            try:
+                self._dragged_button.show()
+                self._dragged_button._update_styles()
+            except RuntimeError:
+                pass  # Button was already deleted
             self._dragged_button = None
 
     def dragEnterEvent(self, event: QDragEnterEvent):
@@ -636,19 +639,22 @@ class ItemsPanel(QWidget):
 
         target_index = self._drop_target_index
         original_index = self._original_index
+        dragged_item = self._dragged_item
+
+        # Clear drag state before rebuilding to prevent accessing deleted widgets
+        self._dragged_item = None
+        self._dragged_button = None
+        self._original_index = -1
 
         self._remove_drop_placeholder()
 
         # Reorder if dropped at a different position
         if target_index >= 0 and target_index != original_index:
-            self._reorder_item(self._dragged_item, target_index)
+            self._reorder_item(dragged_item, target_index)
         else:
             # Rebuild to restore positions
             self._rebuild_buttons()
 
-        self._dragged_item = None
-        self._dragged_button = None
-        self._original_index = -1
         event.acceptProposedAction()
 
     def _find_drop_index_with_threshold(self, pos) -> int:
@@ -663,7 +669,7 @@ class ItemsPanel(QWidget):
         if not visible_buttons:
             return 0
 
-        # Check each button with threshold
+        # Check each button to see if cursor is over it
         for i, btn in visible_buttons:
             btn_rect = btn.geometry()
 
@@ -672,22 +678,15 @@ class ItemsPanel(QWidget):
 
             # Calculate position within button (0.0 to 1.0)
             relative_x = (scroll_pos.x() - btn_rect.x()) / btn_rect.width()
-            relative_y = (scroll_pos.y() - btn_rect.y()) / btn_rect.height()
 
-            # Determine direction based on original position
-            if self._original_index < i:
-                # Dragging forward - need to cross threshold from left
-                if relative_x > self._swap_threshold:
-                    return i
-            elif self._original_index > i:
-                # Dragging backward - need to cross threshold from right
-                if relative_x < (1 - self._swap_threshold):
-                    return i
+            # Use center-based swap: if cursor passes center, swap
+            # This is simpler and more intuitive than directional thresholds
+            if relative_x > 0.5:
+                # Cursor in right half - place after this item
+                return i + 1 if i + 1 <= len(self.item_buttons) - 1 else i
             else:
+                # Cursor in left half - place before this item
                 return i
-
-            # If within threshold but not crossed, keep current target
-            return self._drop_target_index if self._drop_target_index >= 0 else self._original_index
 
         # Grid-based fallback for empty areas
         cell_width = self._pill_width + self._pill_spacing
@@ -707,14 +706,13 @@ class ItemsPanel(QWidget):
         if not self._drop_placeholder or self._original_index is None:
             return
 
-        # Prevent rapid back-and-forth by checking if we just swapped
-        if target_index == self._last_swap_index:
+        # Skip if same position (but allow re-animation if needed)
+        if target_index == self._drop_target_index:
             return
 
         self._drop_target_index = target_index
-        self._last_swap_index = target_index
 
-        # Stop existing animations
+        # Stop existing animations gracefully
         for anim in self._animations:
             anim.stop()
         self._animations = []
@@ -734,16 +732,16 @@ class ItemsPanel(QWidget):
             y = margin + row * (pill_height + spacing)
             return x, y
 
-        # Build list of non-dragged buttons
+        # Build list of non-dragged buttons in their current order
         other_buttons = [btn for btn in self.item_buttons if btn != self._dragged_button]
 
-        # Assign slots - ghost placeholder takes target_index slot
+        # Ghost placeholder takes target_index slot
         ghost_x, ghost_y = get_grid_pos(target_index)
 
         # Animate ghost placeholder
         ghost_anim = QPropertyAnimation(self._drop_placeholder, b"pos")
-        ghost_anim.setDuration(125)  # Slightly faster for responsiveness
-        ghost_anim.setEasingCurve(QEasingCurve.Type.OutQuad)
+        ghost_anim.setDuration(150)
+        ghost_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         ghost_anim.setEndValue(QPoint(ghost_x, ghost_y))
         ghost_anim.start()
         self._animations.append(ghost_anim)
@@ -760,11 +758,11 @@ class ItemsPanel(QWidget):
             target_x, target_y = get_grid_pos(slot)
             current_pos = btn.pos()
 
-            # Only animate if position changed
+            # Animate if position changed
             if current_pos.x() != target_x or current_pos.y() != target_y:
                 anim = QPropertyAnimation(btn, b"pos")
-                anim.setDuration(125)
-                anim.setEasingCurve(QEasingCurve.Type.OutQuad)
+                anim.setDuration(150)
+                anim.setEasingCurve(QEasingCurve.Type.OutCubic)
                 anim.setEndValue(QPoint(target_x, target_y))
                 anim.start()
                 self._animations.append(anim)

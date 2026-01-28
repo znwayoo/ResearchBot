@@ -133,16 +133,19 @@ class ItemButton(QFrame):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        if not (event.buttons() & Qt.MouseButton.LeftButton):
-            return
-        if self._drag_start_pos is None:
-            return
+        try:
+            if not (event.buttons() & Qt.MouseButton.LeftButton):
+                return
+            if self._drag_start_pos is None:
+                return
 
-        distance = (event.pos() - self._drag_start_pos).manhattanLength()
-        if distance < QApplication.startDragDistance():
-            return
+            distance = (event.pos() - self._drag_start_pos).manhattanLength()
+            if distance < QApplication.startDragDistance():
+                return
 
-        self._start_drag()
+            self._start_drag()
+        except RuntimeError:
+            pass  # Widget was deleted
 
     def _start_drag(self):
         """Start a drag operation."""
@@ -167,10 +170,10 @@ class ItemButton(QFrame):
         self.dragStarted.emit(self.item)
 
         # Execute the drag
-        result = drag.exec(Qt.DropAction.MoveAction)
+        drag.exec(Qt.DropAction.MoveAction)
 
-        # Restore styles
-        self._update_styles()
+        # Note: Don't call _update_styles() here - the button may have been
+        # deleted during the drag operation when the panel rebuilds
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
