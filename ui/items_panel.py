@@ -95,6 +95,7 @@ class ItemsPanel(QWidget):
     deleteSelectedRequested = pyqtSignal(list)  # Bulk delete
     orderChanged = pyqtSignal(object, int)  # Item moved to new position
     exportRequested = pyqtSignal(list)  # Export selected items
+    categoriesChanged = pyqtSignal()  # Categories were edited
 
     def __init__(self, item_type: str = "prompt", storage=None, parent=None):
         super().__init__(parent)
@@ -102,7 +103,7 @@ class ItemsPanel(QWidget):
         self.storage = storage
         self.items: List = []
         self.item_buttons: List[ItemButton] = []
-        self.selected_items: List = []
+        self._selected_ids: set = set()  # Track selection by ID
 
         # Drag state - SortableJS-inspired
         self._dragged_item = None
@@ -203,32 +204,26 @@ class ItemsPanel(QWidget):
 
         # Row 1: Filters and count
         filter_row = QHBoxLayout()
-        filter_row.setSpacing(14)
+        filter_row.setSpacing(4)
 
         cat_label = QLabel("Category:")
         cat_label.setStyleSheet(f"font-size: 11px; color: {DARK_THEME['text_secondary']};")
         filter_row.addWidget(cat_label)
 
         self.category_filter = ArrowComboBox()
-        self.category_filter.addItem("All")
-        self.category_filter.addItems(DEFAULT_CATEGORIES)
-        if self.storage:
-            custom_cats = self.storage.get_custom_categories()
-            for cat in custom_cats:
-                if cat not in DEFAULT_CATEGORIES:
-                    self.category_filter.addItem(cat)
-        self.category_filter.setStyleSheet(self._get_filter_combo_style(140))
-        self.category_filter.currentTextChanged.connect(self._apply_filters)
+        self._populate_category_filter()
+        self.category_filter.setStyleSheet(self._get_filter_combo_style(120))
+        self.category_filter.currentTextChanged.connect(self._on_category_filter_changed)
         filter_row.addWidget(self.category_filter)
+
+        filter_row.addSpacing(10)
 
         color_label = QLabel("Color:")
         color_label.setStyleSheet(f"font-size: 11px; color: {DARK_THEME['text_secondary']};")
         filter_row.addWidget(color_label)
 
         self.color_filter = ArrowComboBox()
-        self.color_filter.addItem("All")
-        for color_name in COLOR_PALETTE.keys():
-            self.color_filter.addItem(color_name)
+        self._populate_color_filter()
         self.color_filter.setStyleSheet(self._get_filter_combo_style(80))
         self.color_filter.currentTextChanged.connect(self._apply_filters)
         filter_row.addWidget(self.color_filter)
@@ -240,62 +235,6 @@ class ItemsPanel(QWidget):
         filter_row.addWidget(self.count_label)
 
         header_layout.addLayout(filter_row)
-
-        # Row 2: Actions - buttons on left, status on right
-        action_row = QHBoxLayout()
-        action_row.setSpacing(8)
-        action_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-
-        # Export button (left)
-        self.export_btn = QPushButton("Export")
-        self.export_btn.setFixedSize(60, 24)
-        self.export_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {DARK_THEME['surface_light']};
-                color: {DARK_THEME['text_primary']};
-                border: 1px solid {DARK_THEME['border']};
-                border-radius: 4px;
-                padding: 2px 12px;
-                font-size: 11px;
-            }}
-            QPushButton:hover {{
-                background-color: {DARK_THEME['accent']};
-                border-color: {DARK_THEME['accent']};
-            }}
-        """)
-        self.export_btn.clicked.connect(self._on_export)
-        action_row.addWidget(self.export_btn)
-
-        # Delete button (left, next to export) - only shown when items are selected
-        self.delete_btn = QPushButton("Delete")
-        self.delete_btn.setFixedSize(60, 24)
-        self.delete_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {DARK_THEME['error']};
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 2px 12px;
-                font-size: 11px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background-color: #D32F2F;
-            }}
-        """)
-        self.delete_btn.clicked.connect(self.delete_selected)
-        self.delete_btn.hide()
-        action_row.addWidget(self.delete_btn)
-
-        action_row.addStretch()
-
-        # Selection status (right)
-        self.selection_label = QLabel("")
-        self.selection_label.setStyleSheet(f"font-size: 11px; color: {DARK_THEME['accent']}; font-weight: bold;")
-        self.selection_label.setFixedHeight(24)
-        action_row.addWidget(self.selection_label)
-
-        header_layout.addLayout(action_row)
 
         layout.addWidget(header_container)
 
@@ -350,8 +289,8 @@ class ItemsPanel(QWidget):
                 self.items.pop(i)
                 break
 
-        if item in self.selected_items:
-            self.selected_items.remove(item)
+        if item.id in self._selected_ids:
+            self._selected_ids.discard(item.id)
             self._update_selection_label()
             self.selectionChanged.emit(self.selected_items)
 
@@ -390,7 +329,7 @@ class ItemsPanel(QWidget):
             btn.deleteRequested.connect(self._on_delete_requested)
             btn.dragStarted.connect(self._on_drag_started)
 
-            if item in self.selected_items:
+            if item.id in self._selected_ids:
                 btn.set_selected(True)
 
             self.item_buttons.append(btn)
@@ -410,6 +349,7 @@ class ItemsPanel(QWidget):
             self.flow_container.addLayout(current_row)
 
         self.flow_container.addStretch()
+        self._refresh_filter_counts()
         self._apply_filters()
 
     def _calculate_pill_width(self):
@@ -472,40 +412,44 @@ class ItemsPanel(QWidget):
     def _on_item_double_clicked(self, item):
         self.itemClicked.emit(item)
 
+    @property
+    def selected_items(self) -> List:
+        """Build selected items list from IDs, always referencing current items."""
+        return [item for item in self.items if item.id in self._selected_ids]
+
     def _on_selection_changed(self, item, selected: bool):
         if selected:
-            if item not in self.selected_items:
-                self.selected_items.append(item)
+            self._selected_ids.add(item.id)
         else:
-            if item in self.selected_items:
-                self.selected_items.remove(item)
+            self._selected_ids.discard(item.id)
 
         self._update_selection_label()
         self.selectionChanged.emit(self.selected_items)
 
     def _update_selection_label(self):
-        count = len(self.selected_items)
-        if count > 0:
-            self.selection_label.setText(f"{count} selected")
-            self.delete_btn.show()
-        else:
-            self.selection_label.setText("")
-            self.delete_btn.hide()
+        # Selection UI is managed by research_workspace
+        pass
 
     def _on_delete_requested(self, item):
         self.deleteRequested.emit(item)
 
     def _on_export(self):
         """Handle export button click."""
-        if self.selected_items:
-            self.exportRequested.emit(self.selected_items.copy())
+        selected = self.selected_items
+        if selected:
+            self.exportRequested.emit(selected)
         else:
-            # Export all items if none selected
-            self.exportRequested.emit(self.items.copy())
+            self.exportRequested.emit(list(self.items))
+
+    def _get_filter_name(self, filter_text: str) -> str:
+        """Extract category/color name from filter text like 'Name (3)'."""
+        if " (" in filter_text and filter_text.endswith(")"):
+            return filter_text[:filter_text.rfind(" (")]
+        return filter_text
 
     def _apply_filters(self):
-        category_filter = self.category_filter.currentText()
-        color_filter = self.color_filter.currentText()
+        category_filter = self._get_filter_name(self.category_filter.currentText())
+        color_filter = self._get_filter_name(self.color_filter.currentText())
 
         visible_count = 0
         for btn in self.item_buttons:
@@ -529,42 +473,124 @@ class ItemsPanel(QWidget):
         self.count_label.setText(f"{visible_count} items")
 
     def get_selected_items(self) -> List:
-        return self.selected_items.copy()
+        return self.selected_items
 
     def clear_selection(self):
         for btn in self.item_buttons:
             btn.set_selected(False)
-        self.selected_items.clear()
+        self._selected_ids.clear()
         self._update_selection_label()
         self.selectionChanged.emit([])
 
     def refresh(self):
         self._rebuild_buttons()
 
-    def refresh_categories(self):
-        """Refresh the category filter dropdown with latest categories."""
-        current = self.category_filter.currentText()
+    def _refresh_filter_counts(self):
+        """Update counts in both filter dropdowns without resetting selection."""
+        self._populate_category_filter()
+        self._populate_color_filter()
+
+    def _populate_color_filter(self):
+        """Populate the color filter dropdown with counts."""
+        self.color_filter.blockSignals(True)
+        current = self._get_filter_name(self.color_filter.currentText())
+        self.color_filter.clear()
+
+        color_counts = {}
+        for item in self.items:
+            c = getattr(item, 'color', 'Gray')
+            if not isinstance(c, str):
+                c = c.value
+            color_counts[c] = color_counts.get(c, 0) + 1
+
+        total = len(self.items)
+        self.color_filter.addItem(f"All ({total})")
+
+        for color_name in COLOR_PALETTE.keys():
+            count = color_counts.get(color_name, 0)
+            self.color_filter.addItem(f"{color_name} ({count})")
+
+        # Restore selection
+        for i in range(self.color_filter.count()):
+            if self._get_filter_name(self.color_filter.itemText(i)) == current:
+                self.color_filter.setCurrentIndex(i)
+                break
+
+        self.color_filter.blockSignals(False)
+
+    def _populate_category_filter(self):
+        """Populate the category filter dropdown with categories, counts, and edit option."""
+        self.category_filter.blockSignals(True)
+        current = self._get_filter_name(self.category_filter.currentText())
         self.category_filter.clear()
-        self.category_filter.addItem("All")
-        self.category_filter.addItems(DEFAULT_CATEGORIES)
+
+        # Count items per category
+        cat_counts = {}
+        for item in self.items:
+            cat = getattr(item, 'category', 'Uncategorized')
+            cat_counts[cat] = cat_counts.get(cat, 0) + 1
+
+        total = len(self.items)
+        self.category_filter.addItem(f"All ({total})")
+
+        for cat in DEFAULT_CATEGORIES:
+            count = cat_counts.get(cat, 0)
+            self.category_filter.addItem(f"{cat} ({count})")
 
         if self.storage:
             custom_cats = self.storage.get_custom_categories()
             for cat in custom_cats:
                 if cat not in DEFAULT_CATEGORIES:
-                    self.category_filter.addItem(cat)
+                    count = cat_counts.get(cat, 0)
+                    self.category_filter.addItem(f"{cat} ({count})")
 
-        # Restore previous selection if still valid
-        index = self.category_filter.findText(current)
-        if index >= 0:
-            self.category_filter.setCurrentIndex(index)
-        else:
-            self.category_filter.setCurrentIndex(0)  # Default to "All"
+        self.category_filter.insertSeparator(self.category_filter.count())
+        self.category_filter.addItem("Edit Categories...")
+
+        # Restore selection, default to "All"
+        restored = False
+        if current:
+            for i in range(self.category_filter.count()):
+                if self._get_filter_name(self.category_filter.itemText(i)) == current:
+                    self.category_filter.setCurrentIndex(i)
+                    restored = True
+                    break
+        if not restored:
+            self.category_filter.setCurrentIndex(0)
+
+        self.category_filter.blockSignals(False)
+
+    def _on_category_filter_changed(self, text: str):
+        """Handle category filter change, including the Edit option."""
+        if text == "Edit Categories...":
+            # Reset to previous selection before opening dialog
+            self.category_filter.blockSignals(True)
+            self.category_filter.setCurrentIndex(0)
+            self.category_filter.blockSignals(False)
+            self._open_category_manager()
+            return
+        self._apply_filters()
+
+    def _open_category_manager(self):
+        """Open the category manager dialog."""
+        from ui.item_editor import CategoryManagerDialog
+        dialog = CategoryManagerDialog(self.storage, self)
+        dialog.exec()
+        self.refresh_categories()
+        # Emit signal so workspace can refresh other panels
+        self.categoriesChanged.emit()
+
+    def refresh_categories(self):
+        """Refresh category and color filter dropdowns with latest data."""
+        self._populate_category_filter()
+        self._populate_color_filter()
+        self._apply_filters()
 
     def delete_selected(self):
         """Request deletion of all selected items."""
-        if self.selected_items:
-            self.deleteSelectedRequested.emit(self.selected_items.copy())
+        selected = self.selected_items
+        if selected:
+            self.deleteSelectedRequested.emit(selected)
 
     def _on_drag_started(self, item):
         """Handle drag start - capture animation state like SortableJS."""

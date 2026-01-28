@@ -60,15 +60,15 @@ MODEL_PRIORITY = {
 
 # Default categories for prompts/responses
 DEFAULT_CATEGORIES = [
-    "Literature Review",
-    "Methodology / Methods",
-    "Data Extraction",
-    "Analysis / Interpretation",
-    "Results Synthesis",
-    "Limitations / Risks",
-    "Future Work / Ideas",
-    "Project Management",
-    "Background / Theory",
+    "Literature",
+    "Methodology",
+    "Data",
+    "Analysis",
+    "Results",
+    "Limitations",
+    "Future Work",
+    "Management",
+    "Background",
     "Uncategorized",
 ]
 

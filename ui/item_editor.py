@@ -215,7 +215,7 @@ class ItemEditorDialog(QDialog):
         category_label = QLabel("Category:")
         category_label.setFixedWidth(80)
         self.category_combo = ArrowComboBox()
-        self.category_combo.setEditable(True)
+        self.category_combo.setEditable(False)
         self.category_combo.setMaxVisibleItems(15)
 
         categories = list(DEFAULT_CATEGORIES)
@@ -233,36 +233,6 @@ class ItemEditorDialog(QDialog):
 
         category_layout.addWidget(category_label)
         category_layout.addWidget(self.category_combo, 1)
-
-        self.add_cat_btn = QPushButton("+")
-        self.add_cat_btn.setFixedSize(28, 28)
-        self._add_btn_default_style = f"""
-            QPushButton {{
-                background-color: {DARK_THEME['surface_light']};
-                color: {DARK_THEME['text_primary']};
-                border: 1px solid {DARK_THEME['border']};
-                border-radius: 4px;
-                font-weight: bold;
-                font-size: 14px;
-            }}
-            QPushButton:hover {{
-                background-color: {DARK_THEME['accent']};
-            }}
-        """
-        self._add_btn_success_style = f"""
-            QPushButton {{
-                background-color: {DARK_THEME['success']};
-                color: white;
-                border: 1px solid {DARK_THEME['success']};
-                border-radius: 4px;
-                font-weight: bold;
-                font-size: 12px;
-            }}
-        """
-        self.add_cat_btn.setStyleSheet(self._add_btn_default_style)
-        self.add_cat_btn.setToolTip("Add current text as new category")
-        self.add_cat_btn.clicked.connect(self._add_custom_category)
-        category_layout.addWidget(self.add_cat_btn)
 
         manage_cat_btn = QPushButton("...")
         manage_cat_btn.setFixedSize(28, 28)
@@ -408,52 +378,6 @@ class ItemEditorDialog(QDialog):
             color_name = default_color.get(self.item_type, "Gray")
             self._on_color_selected(color_name)
 
-    def _add_custom_category(self):
-        current_text = self.category_combo.currentText().strip()
-        if not current_text:
-            return
-
-        if self.category_combo.findText(current_text) != -1:
-            self._show_add_feedback(False, "Category already exists")
-            return
-
-        self.category_combo.addItem(current_text)
-        if self.storage:
-            try:
-                self.storage.add_custom_category(current_text)
-                self._show_add_feedback(True, "Category added")
-            except Exception:
-                self._show_add_feedback(False, "Failed to save")
-        else:
-            self._show_add_feedback(True, "Category added")
-
-    def _show_add_feedback(self, success: bool, message: str):
-        """Show visual feedback on the add button."""
-        if success:
-            self.add_cat_btn.setText("OK")
-            self.add_cat_btn.setStyleSheet(self._add_btn_success_style)
-        else:
-            self.add_cat_btn.setText("!")
-            self.add_cat_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {DARK_THEME['warning']};
-                    color: white;
-                    border: 1px solid {DARK_THEME['warning']};
-                    border-radius: 4px;
-                    font-weight: bold;
-                }}
-            """)
-
-        self.add_cat_btn.setToolTip(message)
-
-        QTimer.singleShot(1500, self._reset_add_button)
-
-    def _reset_add_button(self):
-        """Reset the add button to default state."""
-        self.add_cat_btn.setText("+")
-        self.add_cat_btn.setStyleSheet(self._add_btn_default_style)
-        self.add_cat_btn.setToolTip("Add current text as new category")
-
     def _manage_categories(self):
         """Open dialog to manage custom categories."""
         dialog = CategoryManagerDialog(self.storage, self)
@@ -504,14 +428,6 @@ class ItemEditorDialog(QDialog):
         category_text = self.category_combo.currentText().strip()
         if not category_text:
             category_text = "Uncategorized"
-
-        if category_text and self.category_combo.findText(category_text) == -1:
-            self.category_combo.addItem(category_text)
-            if self.storage:
-                try:
-                    self.storage.add_custom_category(category_text)
-                except Exception:
-                    pass
 
         color = self.selected_color if self.selected_color else "Purple"
         if color not in COLOR_PALETTE:
@@ -612,14 +528,53 @@ class CategoryManagerDialog(QDialog):
         layout.setSpacing(12)
         layout.setContentsMargins(16, 16, 16, 16)
 
-        header_label = QLabel("Custom Categories")
+        header_label = QLabel("Manage Categories")
         header_label.setStyleSheet(f"font-weight: bold; font-size: 14px; color: {DARK_THEME['text_primary']};")
         layout.addWidget(header_label)
 
-        info_label = QLabel("Default categories cannot be removed. Select a custom category to edit or remove it.")
+        info_label = QLabel("Default categories cannot be edited or removed. Double-click a custom category to rename it.")
         info_label.setStyleSheet(f"font-size: 11px; color: {DARK_THEME['text_secondary']};")
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
+
+        # Add new category row
+        add_row = QHBoxLayout()
+        self.new_cat_input = QLineEdit()
+        self.new_cat_input.setPlaceholderText("New category name...")
+        self.new_cat_input.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {DARK_THEME['surface']};
+                color: {DARK_THEME['text_primary']};
+                border: 1px solid {DARK_THEME['border']};
+                border-radius: 4px;
+                padding: 6px 10px;
+                font-size: 12px;
+            }}
+            QLineEdit:focus {{
+                border-color: {DARK_THEME['accent']};
+            }}
+        """)
+        self.new_cat_input.returnPressed.connect(self._add_category)
+        add_row.addWidget(self.new_cat_input, 1)
+
+        add_btn = QPushButton("Add")
+        add_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DARK_THEME['accent']};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 16px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {DARK_THEME['accent_hover']};
+            }}
+        """)
+        add_btn.clicked.connect(self._add_category)
+        add_row.addWidget(add_btn)
+
+        layout.addLayout(add_row)
 
         self.category_list = QListWidget()
         self.category_list.itemSelectionChanged.connect(self._on_selection_changed)
@@ -694,8 +649,10 @@ class CategoryManagerDialog(QDialog):
         self.category_list.clear()
 
         for cat in DEFAULT_CATEGORIES:
-            item = QListWidgetItem(cat)
+            item = QListWidgetItem(f"  {cat}  (default)")
             item.setData(Qt.ItemDataRole.UserRole, "default")
+            item.setData(Qt.ItemDataRole.UserRole + 1, cat)
+            item.setForeground(QColor(DARK_THEME['text_secondary']))
             self.category_list.addItem(item)
 
         if self.storage:
@@ -703,11 +660,39 @@ class CategoryManagerDialog(QDialog):
                 custom_cats = self.storage.get_custom_categories()
                 for cat in custom_cats:
                     if cat not in DEFAULT_CATEGORIES:
-                        item = QListWidgetItem(cat)
+                        item = QListWidgetItem(f"  {cat}")
                         item.setData(Qt.ItemDataRole.UserRole, "custom")
+                        item.setData(Qt.ItemDataRole.UserRole + 1, cat)
                         self.category_list.addItem(item)
             except Exception:
                 pass
+
+    def _add_category(self):
+        """Add a new custom category."""
+        name = self.new_cat_input.text().strip()
+        if not name:
+            return
+
+        # Check if it already exists
+        if name in DEFAULT_CATEGORIES:
+            QMessageBox.warning(self, "Error", f"'{name}' is a default category.")
+            return
+
+        if self.storage:
+            existing = self.storage.get_custom_categories()
+            if name in existing:
+                QMessageBox.warning(self, "Error", f"'{name}' already exists.")
+                return
+
+            try:
+                self.storage.add_custom_category(name)
+                item = QListWidgetItem(f"  {name}")
+                item.setData(Qt.ItemDataRole.UserRole, "custom")
+                item.setData(Qt.ItemDataRole.UserRole + 1, name)
+                self.category_list.addItem(item)
+                self.new_cat_input.clear()
+            except Exception:
+                QMessageBox.warning(self, "Error", "Failed to add category.")
 
     def _on_selection_changed(self):
         items = self.category_list.selectedItems()
@@ -729,7 +714,7 @@ class CategoryManagerDialog(QDialog):
         if item.data(Qt.ItemDataRole.UserRole) != "custom":
             return
 
-        old_name = item.text()
+        old_name = item.data(Qt.ItemDataRole.UserRole + 1)
         new_name, ok = QInputDialog.getText(
             self,
             "Rename Category",
@@ -743,7 +728,8 @@ class CategoryManagerDialog(QDialog):
             if self.storage:
                 try:
                     self.storage.rename_custom_category(old_name, new_name)
-                    item.setText(new_name)
+                    item.setText(f"  {new_name}")
+                    item.setData(Qt.ItemDataRole.UserRole + 1, new_name)
                 except Exception:
                     QMessageBox.warning(self, "Error", "Failed to rename category")
 
@@ -756,7 +742,7 @@ class CategoryManagerDialog(QDialog):
         if item.data(Qt.ItemDataRole.UserRole) != "custom":
             return
 
-        cat_name = item.text()
+        cat_name = item.data(Qt.ItemDataRole.UserRole + 1)
         reply = QMessageBox.question(
             self,
             "Remove Category",

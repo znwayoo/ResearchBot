@@ -7,7 +7,10 @@ from typing import List, Optional
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
     QFileDialog,
+    QHBoxLayout,
+    QLabel,
     QMessageBox,
+    QPushButton,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -80,6 +83,53 @@ class ResearchWorkspace(QWidget):
 
         layout.addWidget(self.tabs, 1)
 
+        # Action bar: Export, Delete, selection count
+        action_bar = QWidget()
+        action_bar.setFixedHeight(36)
+        action_layout = QHBoxLayout(action_bar)
+        action_layout.setContentsMargins(8, 0, 8, 0)
+        action_layout.setSpacing(8)
+
+        btn_style = f"""
+            QPushButton {{
+                background-color: {DARK_THEME['surface']};
+                color: {DARK_THEME['text_primary']};
+                border: 1px solid {DARK_THEME['border']};
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                background-color: {DARK_THEME['surface_light']};
+            }}
+        """
+
+        self.export_btn = QPushButton("Export")
+        self.export_btn.setStyleSheet(btn_style)
+        self.export_btn.setFixedHeight(28)
+        self.export_btn.clicked.connect(self._on_action_export)
+        action_layout.addWidget(self.export_btn)
+
+        self.delete_btn = QPushButton("Delete")
+        self.delete_btn.setStyleSheet(btn_style.replace(
+            DARK_THEME['surface_light'],
+            DARK_THEME['error']
+        ))
+        self.delete_btn.setFixedHeight(28)
+        self.delete_btn.setVisible(False)
+        self.delete_btn.clicked.connect(self._on_action_delete)
+        action_layout.addWidget(self.delete_btn)
+
+        action_layout.addStretch()
+
+        self.selection_label = QLabel("")
+        self.selection_label.setStyleSheet(
+            f"color: {DARK_THEME['text_secondary']}; font-size: 12px;"
+        )
+        action_layout.addWidget(self.selection_label)
+
+        layout.addWidget(action_bar)
+
         self.prompt_box = PromptManagementBox()
         layout.addWidget(self.prompt_box)
 
@@ -90,6 +140,7 @@ class ResearchWorkspace(QWidget):
         self.prompts_panel.deleteSelectedRequested.connect(self._on_bulk_delete_prompts)
         self.prompts_panel.orderChanged.connect(self._on_prompt_order_changed)
         self.prompts_panel.exportRequested.connect(self._on_export_prompts)
+        self.prompts_panel.categoriesChanged.connect(self._refresh_all_category_filters)
 
         self.responses_panel.itemClicked.connect(self._on_response_clicked)
         self.responses_panel.deleteRequested.connect(self._on_response_delete)
@@ -97,6 +148,7 @@ class ResearchWorkspace(QWidget):
         self.responses_panel.deleteSelectedRequested.connect(self._on_bulk_delete_responses)
         self.responses_panel.orderChanged.connect(self._on_response_order_changed)
         self.responses_panel.exportRequested.connect(self._on_export_responses)
+        self.responses_panel.categoriesChanged.connect(self._refresh_all_category_filters)
 
         self.summaries_panel.itemClicked.connect(self._on_summary_clicked)
         self.summaries_panel.deleteRequested.connect(self._on_summary_delete)
@@ -104,6 +156,9 @@ class ResearchWorkspace(QWidget):
         self.summaries_panel.deleteSelectedRequested.connect(self._on_bulk_delete_summaries)
         self.summaries_panel.orderChanged.connect(self._on_summary_order_changed)
         self.summaries_panel.exportRequested.connect(self._on_export_summaries)
+        self.summaries_panel.categoriesChanged.connect(self._refresh_all_category_filters)
+
+        self.tabs.currentChanged.connect(lambda: self._on_selection_changed([]))
 
         self.prompt_box.sendRequested.connect(self._on_send)
         self.prompt_box.grabRequested.connect(self._on_grab)
@@ -391,13 +446,37 @@ class ResearchWorkspace(QWidget):
         browser.get_response_text(on_response_received)
 
     def _on_selection_changed(self, selected_items: List):
-        """Update delete button state based on total selections across all panels."""
+        """Update action bar and prompt box based on selections."""
+        current_panel = self._get_active_panel()
+        count = len(current_panel.get_selected_items()) if current_panel else 0
+
+        self.delete_btn.setVisible(count > 0)
+        if count > 0:
+            self.selection_label.setText(f"{count} selected")
+        else:
+            self.selection_label.setText("")
+
         total_selected = (
             len(self.prompts_panel.get_selected_items()) +
             len(self.responses_panel.get_selected_items()) +
             len(self.summaries_panel.get_selected_items())
         )
         self.prompt_box.set_selection_active(total_selected > 0)
+
+    def _get_active_panel(self) -> ItemsPanel:
+        """Return the currently active items panel."""
+        idx = self.tabs.currentIndex()
+        return [self.prompts_panel, self.responses_panel, self.summaries_panel][idx]
+
+    def _on_action_export(self):
+        """Trigger export on the active panel."""
+        panel = self._get_active_panel()
+        panel._on_export()
+
+    def _on_action_delete(self):
+        """Trigger delete on the active panel."""
+        panel = self._get_active_panel()
+        panel.delete_selected()
 
     def _on_delete_selected(self):
         """Delete all selected items from the current active tab."""
@@ -513,10 +592,24 @@ class ResearchWorkspace(QWidget):
         self.statusUpdate.emit("Summary order updated")
 
     def _refresh_all_category_filters(self):
-        """Refresh category filters in all panels after category changes."""
+        """Refresh category filters and sync in-memory items after category changes."""
+        # Reload items from DB so deleted categories show as Uncategorized
+        self._reload_all_items()
         self.prompts_panel.refresh_categories()
         self.responses_panel.refresh_categories()
         self.summaries_panel.refresh_categories()
+
+    def _reload_all_items(self):
+        """Reload all items from storage to pick up category changes."""
+        # _selected_ids are preserved automatically since set_items doesn't clear them
+        prompts = self.storage.get_all_prompts()
+        self.prompts_panel.set_items(prompts)
+
+        responses = self.storage.get_all_response_items()
+        self.responses_panel.set_items(responses)
+
+        summaries = self.storage.get_all_summaries()
+        self.summaries_panel.set_items(summaries)
 
     def _on_export_prompts(self, items: List[PromptItem]):
         """Export prompts to a text file."""

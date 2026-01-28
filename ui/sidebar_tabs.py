@@ -47,7 +47,23 @@ class BrowserPage(QWebEnginePage):
         return self._browser_view
 
     def acceptNavigationRequest(self, url, nav_type, is_main_frame):
-        """Accept all navigation requests including downloads."""
+        """Accept all navigation requests. Redirect external links to Google tab for AI platforms."""
+        url_str = url.toString()
+        platform = self._browser_view.platform
+
+        # For AI platforms, intercept external link clicks and open in Google tab
+        if platform != "google" and is_main_frame and nav_type == QWebEnginePage.NavigationType.NavigationTypeLinkClicked:
+            platform_domains = {
+                "chatgpt": "chat.openai.com",
+                "gemini": "gemini.google.com",
+                "perplexity": "perplexity.ai",
+                "claude": "claude.ai",
+            }
+            domain = platform_domains.get(platform, "")
+            if domain and domain not in url_str:
+                self._browser_view.openInGoogleTab.emit(url_str)
+                return False
+
         return True
 
 
@@ -56,6 +72,7 @@ class PlatformBrowser(QWebEngineView):
 
     responseReady = pyqtSignal(str)
     pageLoaded = pyqtSignal(str)
+    openInGoogleTab = pyqtSignal(str)  # URL to open in Google tab
 
     # Shared profile for persistent cookies across all browsers
     _shared_profile = None
@@ -164,6 +181,33 @@ class PlatformBrowser(QWebEngineView):
         """Handle page load completion."""
         if ok:
             self.pageLoaded.emit(self.platform)
+
+    def contextMenuEvent(self, event):
+        """Custom right-click context menu."""
+        menu = self.createStandardContextMenu()
+        actions_to_remove = []
+        for action in menu.actions():
+            text = action.text().lower()
+            # Remove open in new tab/window and view page source
+            if any(phrase in text for phrase in [
+                "new tab", "new window", "page source", "view source"
+            ]):
+                actions_to_remove.append(action)
+
+        for action in actions_to_remove:
+            menu.removeAction(action)
+
+        # Add "Open in Google Tab" for non-Google platforms if there's a link
+        if self.platform != "google":
+            last_context = self.page().contextMenuData()
+            link_url = last_context.linkUrl()
+            if link_url.isValid() and link_url.toString():
+                open_google_action = menu.addAction("Open in Google Tab")
+                open_google_action.triggered.connect(
+                    lambda: self.openInGoogleTab.emit(link_url.toString())
+                )
+
+        menu.exec(event.globalPos())
 
     def navigate(self, url: str):
         """Navigate to a URL."""
@@ -1450,6 +1494,8 @@ class PlatformBrowser(QWebEngineView):
 class PlatformTab(QWidget):
     """Tab containing an embedded browser for a platform."""
 
+    openInGoogleTab = pyqtSignal(str)  # URL to open in Google tab
+
     def __init__(self, platform: str, url: str, parent=None):
         super().__init__(parent)
         self.platform = platform
@@ -1554,6 +1600,7 @@ class PlatformTab(QWidget):
         # Create and add the browser
         self.browser = PlatformBrowser(self.platform)
         self.browser.pageLoaded.connect(self._on_page_loaded)
+        self.browser.openInGoogleTab.connect(self.openInGoogleTab.emit)
         if self.platform == "google":
             self.browser.urlChanged.connect(self._on_url_changed)
         layout.addWidget(self.browser, 1)
@@ -2970,6 +3017,7 @@ class BrowserTabs(QWidget):
 
         for platform, url in PLATFORMS.items():
             tab = PlatformTab(platform, url)
+            tab.openInGoogleTab.connect(self._open_in_google_tab)
             self.platform_tabs[platform] = tab
             self.tabs.addTab(tab, platform_names.get(platform, platform.title()))
 
@@ -3009,6 +3057,13 @@ class BrowserTabs(QWidget):
         if platform in self.platform_tabs:
             index = list(self.platform_tabs.keys()).index(platform)
             self.tabs.setCurrentIndex(index)
+
+    def _open_in_google_tab(self, url: str):
+        """Open a URL in the Google tab browser."""
+        if "google" in self.platform_tabs:
+            google_tab = self.platform_tabs["google"]
+            google_tab.browser.navigate(url)
+            self.show_platform_tab("google")
 
     def show_log_tab(self):
         """Switch to the log tab (at the end)."""
