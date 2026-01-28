@@ -27,6 +27,22 @@ from PyQt6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor, QAction, QT
 from config import CONFIG_DIR, DARK_THEME, PLATFORMS
 
 
+class BrowserPage(QWebEnginePage):
+    """Custom page that handles new window requests and enables PDF viewing."""
+
+    def __init__(self, profile, browser_view, parent=None):
+        super().__init__(profile, parent)
+        self._browser_view = browser_view
+        # Enable PDF viewing and plugins
+        settings = self.settings()
+        settings.setAttribute(settings.WebAttribute.PluginsEnabled, True)
+        settings.setAttribute(settings.WebAttribute.PdfViewerEnabled, True)
+
+    def createWindow(self, _window_type):
+        """Handle requests to open links in new windows by navigating in the same view."""
+        return self._browser_view
+
+
 class PlatformBrowser(QWebEngineView):
     """Embedded browser for a platform."""
 
@@ -58,7 +74,7 @@ class PlatformBrowser(QWebEngineView):
     def _setup_browser(self):
         """Configure the browser with persistent storage."""
         profile = self.get_shared_profile()
-        page = QWebEnginePage(profile, self)
+        page = BrowserPage(profile, self, self)
         self.setPage(page)
 
         self.loadFinished.connect(self._on_load_finished)
@@ -1366,6 +1382,7 @@ class PlatformTab(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
+        # Header with status and buttons
         header = QFrame()
         header.setStyleSheet(f"""
             QFrame {{
@@ -1419,9 +1436,45 @@ class PlatformTab(QWidget):
 
         layout.addWidget(header)
 
+        # URL bar - only for Google tab
+        if self.platform == "google":
+            url_bar = QFrame()
+            url_bar.setStyleSheet(f"background-color: {DARK_THEME['surface']};")
+            url_layout = QHBoxLayout(url_bar)
+            url_layout.setContentsMargins(12, 4, 12, 4)
+            url_layout.setSpacing(8)
+
+            self.url_input = QLineEdit()
+            self.url_input.setPlaceholderText("Enter URL...")
+            self.url_input.setStyleSheet(f"""
+                QLineEdit {{
+                    background-color: {DARK_THEME['background']};
+                    color: {DARK_THEME['text_primary']};
+                    border: 1px solid {DARK_THEME['border']};
+                    border-radius: 4px;
+                    padding: 4px 8px;
+                    font-size: 11px;
+                }}
+                QLineEdit:focus {{
+                    border-color: {DARK_THEME['accent']};
+                }}
+            """)
+            self.url_input.returnPressed.connect(self._navigate_to_url)
+            url_layout.addWidget(self.url_input)
+
+            go_btn = QPushButton("Go")
+            go_btn.setFixedWidth(56)
+            go_btn.setStyleSheet(self._button_style())
+            go_btn.clicked.connect(self._navigate_to_url)
+            url_layout.addWidget(go_btn)
+
+            layout.addWidget(url_bar)
+
         # Create and add the browser
         self.browser = PlatformBrowser(self.platform)
         self.browser.pageLoaded.connect(self._on_page_loaded)
+        if self.platform == "google":
+            self.browser.urlChanged.connect(self._on_url_changed)
         layout.addWidget(self.browser, 1)
 
         # Navigate to the platform URL
@@ -1455,6 +1508,22 @@ class PlatformTab(QWidget):
         """Refresh the browser."""
         if self.browser:
             self.browser.reload()
+
+    def _navigate_to_url(self):
+        """Navigate to the URL in the URL bar."""
+        if not hasattr(self, 'url_input'):
+            return
+        url = self.url_input.text().strip()
+        if url:
+            if not url.startswith(("http://", "https://")):
+                url = "https://" + url
+            if self.browser:
+                self.browser.navigate(url)
+
+    def _on_url_changed(self, url):
+        """Update URL bar when browser URL changes."""
+        if hasattr(self, 'url_input'):
+            self.url_input.setText(url.toString())
 
     def _clear_browser_data(self):
         """Clear cookies and browser data for this profile."""

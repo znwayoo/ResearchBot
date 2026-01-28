@@ -118,7 +118,8 @@ class ItemsPanel(QWidget):
 
         # Dynamic sizing for 2 columns
         self._num_columns = 2
-        self._pill_spacing = 8
+        self._pill_spacing = 8  # Horizontal spacing between pills
+        self._row_spacing = 8   # Vertical spacing between rows
         self._pill_margin = 8
         self._pill_height = 36
         self._pill_width = 200  # Default, will be recalculated
@@ -188,20 +189,25 @@ class ItemsPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
-        filter_frame = QFrame()
-        filter_frame.setStyleSheet(f"""
+        # Header container with two rows
+        header_container = QFrame()
+        header_container.setStyleSheet(f"""
             QFrame {{
                 background-color: {DARK_THEME['surface']};
                 border-radius: 4px;
             }}
         """)
-        filter_layout = QHBoxLayout(filter_frame)
-        filter_layout.setContentsMargins(8, 6, 8, 6)
-        filter_layout.setSpacing(8)
+        header_layout = QVBoxLayout(header_container)
+        header_layout.setContentsMargins(8, 6, 8, 6)
+        header_layout.setSpacing(4)
+
+        # Row 1: Filters and count
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(14)
 
         cat_label = QLabel("Category:")
         cat_label.setStyleSheet(f"font-size: 11px; color: {DARK_THEME['text_secondary']};")
-        filter_layout.addWidget(cat_label)
+        filter_row.addWidget(cat_label)
 
         self.category_filter = ArrowComboBox()
         self.category_filter.addItem("All")
@@ -213,11 +219,11 @@ class ItemsPanel(QWidget):
                     self.category_filter.addItem(cat)
         self.category_filter.setStyleSheet(self._get_filter_combo_style(140))
         self.category_filter.currentTextChanged.connect(self._apply_filters)
-        filter_layout.addWidget(self.category_filter)
+        filter_row.addWidget(self.category_filter)
 
         color_label = QLabel("Color:")
         color_label.setStyleSheet(f"font-size: 11px; color: {DARK_THEME['text_secondary']};")
-        filter_layout.addWidget(color_label)
+        filter_row.addWidget(color_label)
 
         self.color_filter = ArrowComboBox()
         self.color_filter.addItem("All")
@@ -225,38 +231,24 @@ class ItemsPanel(QWidget):
             self.color_filter.addItem(color_name)
         self.color_filter.setStyleSheet(self._get_filter_combo_style(80))
         self.color_filter.currentTextChanged.connect(self._apply_filters)
-        filter_layout.addWidget(self.color_filter)
+        filter_row.addWidget(self.color_filter)
 
-        filter_layout.addStretch()
+        filter_row.addStretch()
 
-        self.selection_label = QLabel("")
-        self.selection_label.setStyleSheet(f"font-size: 11px; color: {DARK_THEME['accent']}; font-weight: bold;")
-        filter_layout.addWidget(self.selection_label)
+        self.count_label = QLabel("0 items")
+        self.count_label.setStyleSheet(f"font-size: 11px; color: {DARK_THEME['text_secondary']};")
+        filter_row.addWidget(self.count_label)
 
-        # Delete button - only shown when items are selected
-        self.delete_btn = QPushButton("Delete")
-        self.delete_btn.setFixedHeight(24)
-        self.delete_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {DARK_THEME['error']};
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 2px 12px;
-                font-size: 11px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background-color: #D32F2F;
-            }}
-        """)
-        self.delete_btn.clicked.connect(self.delete_selected)
-        self.delete_btn.hide()  # Hidden by default
-        filter_layout.addWidget(self.delete_btn)
+        header_layout.addLayout(filter_row)
 
-        # Export button
+        # Row 2: Actions - buttons on left, status on right
+        action_row = QHBoxLayout()
+        action_row.setSpacing(8)
+        action_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        # Export button (left)
         self.export_btn = QPushButton("Export")
-        self.export_btn.setFixedHeight(24)
+        self.export_btn.setFixedSize(60, 24)
         self.export_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {DARK_THEME['surface_light']};
@@ -272,13 +264,40 @@ class ItemsPanel(QWidget):
             }}
         """)
         self.export_btn.clicked.connect(self._on_export)
-        filter_layout.addWidget(self.export_btn)
+        action_row.addWidget(self.export_btn)
 
-        self.count_label = QLabel("0 items")
-        self.count_label.setStyleSheet(f"font-size: 11px; color: {DARK_THEME['text_secondary']};")
-        filter_layout.addWidget(self.count_label)
+        # Delete button (left, next to export) - only shown when items are selected
+        self.delete_btn = QPushButton("Delete")
+        self.delete_btn.setFixedSize(60, 24)
+        self.delete_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DARK_THEME['error']};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 2px 12px;
+                font-size: 11px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: #D32F2F;
+            }}
+        """)
+        self.delete_btn.clicked.connect(self.delete_selected)
+        self.delete_btn.hide()
+        action_row.addWidget(self.delete_btn)
 
-        layout.addWidget(filter_frame)
+        action_row.addStretch()
+
+        # Selection status (right)
+        self.selection_label = QLabel("")
+        self.selection_label.setStyleSheet(f"font-size: 11px; color: {DARK_THEME['accent']}; font-weight: bold;")
+        self.selection_label.setFixedHeight(24)
+        action_row.addWidget(self.selection_label)
+
+        header_layout.addLayout(action_row)
+
+        layout.addWidget(header_container)
 
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
@@ -310,8 +329,8 @@ class ItemsPanel(QWidget):
         self.scroll_content.setStyleSheet(f"background-color: {DARK_THEME['background']};")
 
         self.flow_container = QVBoxLayout(self.scroll_content)
-        self.flow_container.setContentsMargins(8, 8, 8, 8)
-        self.flow_container.setSpacing(6)
+        self.flow_container.setContentsMargins(self._pill_margin, self._pill_margin, self._pill_margin, self._pill_margin)
+        self.flow_container.setSpacing(self._row_spacing)
         self.flow_container.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         self.scroll_area.setWidget(self.scroll_content)
@@ -430,10 +449,17 @@ class ItemsPanel(QWidget):
                 QTimer.singleShot(100, self._rebuild_buttons)
 
     def showEvent(self, event):
-        """Recalculate when widget becomes visible."""
+        """Recalculate when widget becomes visible, but only if size changed."""
         super().showEvent(event)
         if self.items:
-            QTimer.singleShot(50, self._rebuild_buttons)
+            # Only rebuild if width changed significantly to avoid unnecessary rebuilds
+            old_width = self._pill_width
+            self._calculate_pill_width()
+            if abs(self._pill_width - old_width) > 5:
+                QTimer.singleShot(50, self._rebuild_buttons)
+            else:
+                # Restore the old width since we're not rebuilding
+                self._pill_width = old_width
 
     def _clear_layout(self, layout):
         while layout.count():
@@ -690,7 +716,7 @@ class ItemsPanel(QWidget):
 
         # Grid-based fallback for empty areas
         cell_width = self._pill_width + self._pill_spacing
-        cell_height = self._pill_height + self._pill_spacing
+        cell_height = self._pill_height + self._row_spacing
 
         col = max(0, int((scroll_pos.x() - self._pill_margin) / cell_width))
         row = max(0, int((scroll_pos.y() - self._pill_margin) / cell_height))
@@ -720,7 +746,8 @@ class ItemsPanel(QWidget):
         # Calculate grid positions
         pill_width = self._pill_width
         pill_height = self._pill_height
-        spacing = self._pill_spacing
+        h_spacing = self._pill_spacing
+        v_spacing = self._row_spacing
         margin = self._pill_margin
         num_cols = self._num_columns
 
@@ -728,8 +755,8 @@ class ItemsPanel(QWidget):
             """Get x, y position for a grid slot."""
             row = slot // num_cols
             col = slot % num_cols
-            x = margin + col * (pill_width + spacing)
-            y = margin + row * (pill_height + spacing)
+            x = margin + col * (pill_width + h_spacing)
+            y = margin + row * (pill_height + v_spacing)
             return x, y
 
         # Build list of non-dragged buttons in their current order

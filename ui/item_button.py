@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMenu,
     QPushButton,
+    QSizePolicy,
 )
 
 from config import COLOR_PALETTE, DARK_THEME
@@ -61,6 +62,8 @@ class ItemButton(QFrame):
         # Width will be set by parent panel based on container size
         self.setMinimumWidth(100)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Prevent size policy from allowing expansion
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
         color_hex = self._get_color_hex()
         text_color = get_contrasting_text_color(color_hex)
@@ -103,28 +106,19 @@ class ItemButton(QFrame):
         layout.addWidget(self.edit_btn)
 
     def _update_styles(self):
-        if self._selected:
-            self.setStyleSheet(f"""
-                ItemButton {{
-                    background-color: {self._color_hex};
-                    border: 2px solid #FFFFFF;
-                    border-radius: 6px;
-                }}
-                ItemButton:hover {{
-                    background-color: {self._hover_color};
-                }}
-            """)
-        else:
-            self.setStyleSheet(f"""
-                ItemButton {{
-                    background-color: {self._color_hex};
-                    border: none;
-                    border-radius: 6px;
-                }}
-                ItemButton:hover {{
-                    background-color: {self._hover_color};
-                }}
-            """)
+        # Always use 2px border to maintain consistent size
+        # Use transparent border when not selected to avoid visual expansion
+        border_color = "#FFFFFF" if self._selected else "transparent"
+        self.setStyleSheet(f"""
+            ItemButton {{
+                background-color: {self._color_hex};
+                border: 2px solid {border_color};
+                border-radius: 6px;
+            }}
+            ItemButton:hover {{
+                background-color: {self._hover_color};
+            }}
+        """)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:

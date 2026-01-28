@@ -450,9 +450,11 @@ class MainWindow(QMainWindow):
         main_layout = QHBoxLayout(central_widget)
         main_layout.setContentsMargins(0, 0, 0, 0)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.setChildrenCollapsible(False)
 
         left_widget = QWidget()
+        left_widget.setMinimumWidth(300)
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(8, 8, 4, 8)
 
@@ -461,20 +463,24 @@ class MainWindow(QMainWindow):
         self.workspace = ResearchWorkspace(self.storage, self.browser_tabs)
         left_layout.addWidget(self.workspace, 1)
 
-        splitter.addWidget(left_widget)
+        self.splitter.addWidget(left_widget)
 
         right_widget = QWidget()
+        right_widget.setMinimumWidth(400)
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(4, 8, 8, 8)
 
         right_layout.addWidget(self.browser_tabs)
 
-        splitter.addWidget(right_widget)
+        self.splitter.addWidget(right_widget)
 
         # Left side (workspace) gets 1/3, right side (browsers) gets 2/3
-        splitter.setSizes([WINDOW_WIDTH // 3, WINDOW_WIDTH * 2 // 3])
+        # Set stretch factors to maintain ratio
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 2)
+        self.splitter.setSizes([WINDOW_WIDTH // 3, WINDOW_WIDTH * 2 // 3])
 
-        main_layout.addWidget(splitter)
+        main_layout.addWidget(self.splitter)
 
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
