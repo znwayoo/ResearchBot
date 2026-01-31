@@ -2642,6 +2642,8 @@ class MarkdownNotebookTab(QWidget):
             lines = lines[:-1]
 
         first_block = True
+        current_list = None
+        current_list_type = None
 
         # Default formats to reset to between blocks
         default_block_fmt = QTextBlockFormat()
@@ -2666,6 +2668,8 @@ class MarkdownNotebookTab(QWidget):
 
             # Empty line = blank line
             if not stripped:
+                current_list = None
+                current_list_type = None
                 continue
 
             # Heading: # ## ###
@@ -2684,6 +2688,8 @@ class MarkdownNotebookTab(QWidget):
                 fmt.setFontPointSize(sizes.get(level, 14))
                 fmt.setFontWeight(QFont.Weight.Bold)
                 self._insert_inline_markdown(cursor, text, base_fmt=fmt)
+                current_list = None
+                current_list_type = None
                 continue
 
             # Blockquote: > text
@@ -2699,6 +2705,8 @@ class MarkdownNotebookTab(QWidget):
                 fmt.setFontItalic(True)
                 fmt.setFontPointSize(14)
                 cursor.insertText(text, fmt)
+                current_list = None
+                current_list_type = None
                 continue
 
             # Horizontal rule: ---
@@ -2706,15 +2714,21 @@ class MarkdownNotebookTab(QWidget):
                 cursor.insertHtml(
                     f'<hr style="border: none; border-top: 1px solid {DARK_THEME["border"]};" />'
                 )
+                current_list = None
+                current_list_type = None
                 continue
 
             # Unordered list: - or * item
             bullet_match = re.match(r'^[-*]\s+(.+)$', stripped)
             if bullet_match:
                 text = bullet_match.group(1)
-                list_fmt = QTextListFormat()
-                list_fmt.setStyle(QTextListFormat.Style.ListDisc)
-                cursor.createList(list_fmt)
+                if current_list and current_list_type == 'ul':
+                    current_list.add(cursor.block())
+                else:
+                    list_fmt = QTextListFormat()
+                    list_fmt.setStyle(QTextListFormat.Style.ListDisc)
+                    current_list = cursor.createList(list_fmt)
+                    current_list_type = 'ul'
                 self._insert_inline_markdown(cursor, text)
                 continue
 
@@ -2722,13 +2736,19 @@ class MarkdownNotebookTab(QWidget):
             num_match = re.match(r'^\d+\.\s+(.+)$', stripped)
             if num_match:
                 text = num_match.group(1)
-                list_fmt = QTextListFormat()
-                list_fmt.setStyle(QTextListFormat.Style.ListDecimal)
-                cursor.createList(list_fmt)
+                if current_list and current_list_type == 'ol':
+                    current_list.add(cursor.block())
+                else:
+                    list_fmt = QTextListFormat()
+                    list_fmt.setStyle(QTextListFormat.Style.ListDecimal)
+                    current_list = cursor.createList(list_fmt)
+                    current_list_type = 'ol'
                 self._insert_inline_markdown(cursor, text)
                 continue
 
             # Regular paragraph with inline formatting
+            current_list = None
+            current_list_type = None
             self._insert_inline_markdown(cursor, stripped)
 
     def _insert_inline_markdown(self, cursor, text, base_fmt=None):
