@@ -616,9 +616,8 @@ class MainWindow(QMainWindow):
             self,
             f"About {APP_NAME}",
             f"{APP_NAME} v{APP_VERSION}\n\n"
-            "A multi-platform AI research orchestration tool.\n\n"
-            "Query Gemini, Perplexity, and ChatGPT simultaneously "
-            "and get merged, deduplicated responses.\n\n"
+            "Desktop research tool that lets you query multiple AI platforms, "
+            "grab and organize responses, and export your findings from one place.\n\n"
             "Built with Python and PyQt6."
         )
 

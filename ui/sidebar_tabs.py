@@ -293,10 +293,7 @@ class PlatformBrowser(QWebEngineView):
                     // For contenteditable, clear and set content directly
                     input.focus();
 
-                    // Clear content by setting innerHTML
-                    input.innerHTML = '';
-
-                    // Set content directly - more reliable than execCommand
+                    // Clear and set content directly
                     input.textContent = text;
 
                     // Move cursor to end
@@ -1055,7 +1052,6 @@ class PlatformBrowser(QWebEngineView):
                     input.dispatchEvent(new Event('input', {{ bubbles: true }}));
                 }} else {{
                     // Clear and set content directly
-                    input.innerHTML = '';
                     input.textContent = text;
 
                     // Move cursor to end

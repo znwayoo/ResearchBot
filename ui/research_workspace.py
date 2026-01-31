@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
     QTabWidget,
@@ -110,13 +111,51 @@ class ResearchWorkspace(QWidget):
         self.export_btn.clicked.connect(self._on_action_export)
         action_layout.addWidget(self.export_btn)
 
+        self.move_btn = QPushButton("Move")
+        self.move_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DARK_THEME['surface']};
+                color: {DARK_THEME['text_primary']};
+                border: 1px solid {DARK_THEME['border']};
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                background-color: {DARK_THEME['accent']};
+                color: white;
+            }}
+            QPushButton:disabled {{
+                color: {DARK_THEME['text_secondary']};
+                background-color: {DARK_THEME['surface']};
+            }}
+        """)
+        self.move_btn.setFixedHeight(28)
+        self.move_btn.setEnabled(False)
+        self.move_btn.clicked.connect(self._on_action_move)
+        action_layout.addWidget(self.move_btn)
+
         self.delete_btn = QPushButton("Delete")
-        self.delete_btn.setStyleSheet(btn_style.replace(
-            DARK_THEME['surface_light'],
-            DARK_THEME['error']
-        ))
+        self.delete_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DARK_THEME['surface']};
+                color: {DARK_THEME['text_primary']};
+                border: 1px solid {DARK_THEME['border']};
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                background-color: {DARK_THEME['error']};
+                color: white;
+            }}
+            QPushButton:disabled {{
+                color: {DARK_THEME['text_secondary']};
+                background-color: {DARK_THEME['surface']};
+            }}
+        """)
         self.delete_btn.setFixedHeight(28)
-        self.delete_btn.setVisible(False)
+        self.delete_btn.setEnabled(False)
         self.delete_btn.clicked.connect(self._on_action_delete)
         action_layout.addWidget(self.delete_btn)
 
@@ -450,7 +489,8 @@ class ResearchWorkspace(QWidget):
         current_panel = self._get_active_panel()
         count = len(current_panel.get_selected_items()) if current_panel else 0
 
-        self.delete_btn.setVisible(count > 0)
+        self.delete_btn.setEnabled(count > 0)
+        self.move_btn.setEnabled(count > 0)
         if count > 0:
             self.selection_label.setText(f"{count} selected")
         else:
@@ -477,6 +517,93 @@ class ResearchWorkspace(QWidget):
         """Trigger delete on the active panel."""
         panel = self._get_active_panel()
         panel.delete_selected()
+
+    def _on_action_move(self):
+        """Show menu to move selected items to another tab."""
+        panel = self._get_active_panel()
+        selected = panel.get_selected_items()
+        if not selected:
+            return
+
+        tab_names = ["Prompts", "Responses", "Summaries"]
+        tab_types = ["prompt", "response", "summary"]
+        current_idx = self.tabs.currentIndex()
+
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {DARK_THEME['surface']};
+                color: {DARK_THEME['text_primary']};
+                border: 1px solid {DARK_THEME['border']};
+                padding: 4px;
+            }}
+            QMenu::item {{
+                padding: 6px 20px;
+            }}
+            QMenu::item:selected {{
+                background-color: {DARK_THEME['accent']};
+                color: white;
+            }}
+        """)
+
+        for i, name in enumerate(tab_names):
+            if i == current_idx:
+                continue
+            action = menu.addAction(f"Move to {name}")
+            action.setData(i)
+
+        chosen = menu.exec(self.move_btn.mapToGlobal(self.move_btn.rect().topRight()))
+        if chosen:
+            target_idx = chosen.data()
+            self._move_items(selected, tab_types[current_idx], tab_types[target_idx], target_idx)
+
+    def _move_items(self, items, source_type, target_type, target_tab_idx):
+        """Move items from one tab type to another."""
+        now = datetime.now()
+        source_panel = self._get_active_panel()
+        target_panel = [self.prompts_panel, self.responses_panel, self.summaries_panel][target_tab_idx]
+
+        for item in items:
+            shared = {
+                "title": item.title,
+                "content": item.content,
+                "category": item.category,
+                "color": item.color,
+                "custom_color_hex": item.custom_color_hex,
+                "created_at": item.created_at,
+                "updated_at": now,
+            }
+            platform = getattr(item, "platform", None)
+
+            if target_type == "prompt":
+                new_item = PromptItem(**shared)
+                new_id = self.storage.save_prompt(new_item)
+                new_item.id = new_id
+            elif target_type == "response":
+                content_hash = hashlib.sha256(item.content.encode()).hexdigest()
+                new_item = ResponseItem(**shared, platform=platform, content_hash=content_hash)
+                new_id = self.storage.save_response_item(new_item)
+                new_item.id = new_id
+            else:
+                new_item = SummaryItem(**shared, platform=platform, source_responses=[])
+                new_id = self.storage.save_summary(new_item)
+                new_item.id = new_id
+
+            # Delete from source
+            if source_type == "prompt":
+                self.storage.delete_prompt(item.id)
+            elif source_type == "response":
+                self.storage.delete_response_item(item.id)
+            else:
+                self.storage.delete_summary(item.id)
+
+            source_panel.remove_item(item)
+            target_panel.add_item(new_item)
+
+        source_panel.clear_selection()
+        self.tabs.setCurrentIndex(target_tab_idx)
+        tab_name = ["Prompts", "Responses", "Summaries"][target_tab_idx]
+        self.statusUpdate.emit(f"Moved {len(items)} item(s) to {tab_name}")
 
     def _on_delete_selected(self):
         """Delete all selected items from the current active tab."""
