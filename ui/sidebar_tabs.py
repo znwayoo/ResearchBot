@@ -1998,6 +1998,7 @@ class MarkdownNotebookTab(QWidget):
 
         doc = self.editor.document()
         doc.setDefaultStyleSheet(f"""
+            body {{ line-height: 1.3; }}
             hr {{ border: none; border-top: 1px solid {DARK_THEME['border']}; margin: 8px 0; }}
             blockquote {{
                 border-left: 3px solid {DARK_THEME['border']};
@@ -2007,11 +2008,6 @@ class MarkdownNotebookTab(QWidget):
                 margin: 8px 0;
             }}
         """)
-        default_block_fmt = QTextBlockFormat()
-        default_block_fmt.setLineHeight(130, 1)  # 1 = ProportionalHeight
-        cursor = self.editor.textCursor()
-        cursor.select(QTextCursor.SelectionType.Document)
-        cursor.setBlockFormat(default_block_fmt)
 
         self.editor.textChanged.connect(self._on_content_changed)
         self.editor.cursorPositionChanged.connect(self._update_format_buttons)
@@ -2151,17 +2147,8 @@ class MarkdownNotebookTab(QWidget):
             cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
             cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
 
-        # Reset character format
-        fmt = QTextCharFormat()
-        fmt.setFontPointSize(14)
-        fmt.setFontWeight(QFont.Weight.Normal)
-        fmt.setFontItalic(False)
-        fmt.setFontUnderline(False)
-        fmt.setFontStrikeOut(False)
-        fmt.setFontFamily("Georgia")
-        fmt.setForeground(QColor(DARK_THEME['text_primary']))
-        fmt.setBackground(QColor(0, 0, 0, 0))  # Transparent
-        cursor.setCharFormat(fmt)
+        # Clear all character formatting back to editor defaults
+        cursor.setCharFormat(QTextCharFormat())
 
         # Reset block format
         block_fmt = cursor.blockFormat()
@@ -2171,7 +2158,6 @@ class MarkdownNotebookTab(QWidget):
         block_fmt.setBottomMargin(0)
         block_fmt.setHeadingLevel(0)
         block_fmt.setProperty(QTextFormat.Property.BlockQuoteLevel, 0)
-        block_fmt.setLineHeight(130, 1)
         block_fmt.setAlignment(Qt.AlignmentFlag.AlignLeft)
         cursor.setBlockFormat(block_fmt)
 
@@ -2289,59 +2275,26 @@ class MarkdownNotebookTab(QWidget):
                 char_fmt = cursor.charFormat()
                 block_fmt = cursor.blockFormat()
 
-                # Check for header (large font), blockquote, or special styling
-                is_header = block_fmt.headingLevel() > 0 or char_fmt.fontPointSize() >= 16
-                has_margin = block_fmt.leftMargin() > 0
+                # Only intercept for headings and blockquotes
+                is_header = block_fmt.headingLevel() > 0
                 quote_level = block_fmt.property(QTextFormat.Property.BlockQuoteLevel)
                 is_quote = quote_level and quote_level > 0
-                is_list = cursor.currentList() is not None
-                needs_reset = is_header or has_margin or is_quote
 
-                if not needs_reset and not is_list:
+                if not is_header and not is_quote:
                     return False
 
                 # Let the default Enter happen first
                 self.editor.keyPressEvent(event)
 
-                # Then reset formatting for the new line
+                # Reset formatting for the new line
                 new_cursor = self.editor.textCursor()
-
-                if needs_reset:
-                    # Reset character format to normal
-                    fmt = QTextCharFormat()
-                    fmt.setFontPointSize(14)
-                    fmt.setFontWeight(QFont.Weight.Normal)
-                    fmt.setFontItalic(False)
-                    fmt.setFontUnderline(False)
-                    fmt.setFontStrikeOut(False)
-                    fmt.setFontFamily("Georgia")
-                    fmt.setForeground(QColor(DARK_THEME['text_primary']))
-                    fmt.clearBackground()
-                    new_cursor.setCharFormat(fmt)
-
-                    # Reset block format for headers/quotes
-                    new_block_fmt = new_cursor.blockFormat()
-                    new_block_fmt.setLeftMargin(0)
-                    new_block_fmt.setTopMargin(0)
-                    new_block_fmt.setBottomMargin(0)
-                    new_block_fmt.setIndent(0)
-                    new_block_fmt.setHeadingLevel(0)
-                    new_block_fmt.setProperty(QTextFormat.Property.BlockQuoteLevel, 0)
-                    new_block_fmt.setLineHeight(130, 1)
-                    new_cursor.setBlockFormat(new_block_fmt)
-
+                new_cursor.setCharFormat(QTextCharFormat())
+                new_block_fmt = QTextBlockFormat()
+                new_cursor.setBlockFormat(new_block_fmt)
                 self.editor.setTextCursor(new_cursor)
-                return True  # Event handled
+                return True
 
         return super().eventFilter(obj, event)
-
-    def _ensure_line_height(self):
-        """Set line height on the current block after Enter."""
-        cursor = self.editor.textCursor()
-        block_fmt = cursor.blockFormat()
-        if block_fmt.lineHeight() != 130:
-            block_fmt.setLineHeight(130, 1)
-            cursor.setBlockFormat(block_fmt)
 
     def _apply_live_markdown(self):
         """Apply Notion-like live markdown formatting when patterns are completed."""
@@ -2635,9 +2588,6 @@ class MarkdownNotebookTab(QWidget):
                 cursor.mergeCharFormat(char_fmt)
                 modified = True
 
-            if not modified:
-                new_fmt.setLineHeight(130, 1)
-
             cursor.setBlockFormat(new_fmt)
             block = block.next()
 
@@ -2662,15 +2612,7 @@ class MarkdownNotebookTab(QWidget):
 
         # Default formats to reset to between blocks
         default_block_fmt = QTextBlockFormat()
-        default_block_fmt.setLineHeight(130, 1)
         default_char_fmt = QTextCharFormat()
-        default_char_fmt.setFontPointSize(14)
-        default_char_fmt.setFontFamily("Georgia")
-        default_char_fmt.setForeground(QColor(DARK_THEME['text_primary']))
-        default_char_fmt.setFontWeight(QFont.Weight.Normal)
-        default_char_fmt.setFontItalic(False)
-        default_char_fmt.setFontStrikeOut(False)
-        default_char_fmt.setFontUnderline(False)
 
         for line in lines:
             if not first_block:
@@ -2761,10 +2703,15 @@ class MarkdownNotebookTab(QWidget):
                 self._insert_inline_markdown(cursor, text)
                 continue
 
-            # Regular paragraph with inline formatting
+            # Regular paragraph
             current_list = None
             current_list_type = None
-            self._insert_inline_markdown(cursor, stripped)
+            # Only apply inline markdown parsing if line has markdown syntax
+            import re as _re
+            if _re.search(r'\*\*|__|\*|_|~~|`|<u>|</u>', stripped):
+                self._insert_inline_markdown(cursor, stripped)
+            else:
+                cursor.insertText(stripped)
 
     def _insert_inline_markdown(self, cursor, text, base_fmt=None):
         """Parse inline markdown (bold, italic, strikethrough) and insert formatted text."""
@@ -2772,9 +2719,6 @@ class MarkdownNotebookTab(QWidget):
 
         if base_fmt is None:
             base_fmt = QTextCharFormat()
-            base_fmt.setFontPointSize(14)
-            base_fmt.setFontFamily("Georgia")
-            base_fmt.setForeground(QColor(DARK_THEME['text_primary']))
 
         # Pattern matches inline markdown formats or plain text
         pattern = re.compile(
