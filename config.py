@@ -31,7 +31,7 @@ BROWSER_TIMEOUT = 60
 RESPONSE_WAIT_TIME = 180
 
 # File handling limits
-MAX_FILES = 5
+MAX_FILES = 3
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 # Text and document formats
 SUPPORTED_FORMATS = [

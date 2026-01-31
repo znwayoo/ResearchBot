@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 
 from config import DARK_THEME
 from ui.item_editor import ItemEditorDialog
+from ui.sidebar_tabs import MarkdownNotebookTab
 from ui.items_panel import ItemsPanel
 from ui.prompt_box import PromptManagementBox
 from utils.local_storage import LocalStorage
@@ -81,6 +82,9 @@ class ResearchWorkspace(QWidget):
 
         self.summaries_panel = ItemsPanel(item_type="summary", storage=self.storage)
         self.tabs.addTab(self.summaries_panel, "Summaries")
+
+        self.notebook_tab = MarkdownNotebookTab()
+        self.tabs.addTab(self.notebook_tab, "Notebook")
 
         layout.addWidget(self.tabs, 1)
 
@@ -163,11 +167,12 @@ class ResearchWorkspace(QWidget):
 
         self.selection_label = QLabel("")
         self.selection_label.setStyleSheet(
-            f"color: {DARK_THEME['text_secondary']}; font-size: 12px;"
+            f"color: {DARK_THEME['accent']}; font-size: 12px; font-weight: bold;"
         )
         action_layout.addWidget(self.selection_label)
 
-        layout.addWidget(action_bar)
+        self.action_bar = action_bar
+        layout.addWidget(self.action_bar)
 
         self.prompt_box = PromptManagementBox()
         layout.addWidget(self.prompt_box)
@@ -197,7 +202,7 @@ class ResearchWorkspace(QWidget):
         self.summaries_panel.exportRequested.connect(self._on_export_summaries)
         self.summaries_panel.categoriesChanged.connect(self._refresh_all_category_filters)
 
-        self.tabs.currentChanged.connect(lambda: self._on_selection_changed([]))
+        self.tabs.currentChanged.connect(self._on_tab_changed)
 
         self.prompt_box.sendRequested.connect(self._on_send)
         self.prompt_box.grabRequested.connect(self._on_grab)
@@ -484,6 +489,14 @@ class ResearchWorkspace(QWidget):
 
         browser.get_response_text(on_response_received)
 
+    def _on_tab_changed(self):
+        """Handle tab switching, hiding action bar and prompt box for Notebook."""
+        is_notebook = self.tabs.currentIndex() == 3
+        self.action_bar.setVisible(not is_notebook)
+        self.prompt_box.setVisible(not is_notebook)
+        if not is_notebook:
+            self._on_selection_changed([])
+
     def _on_selection_changed(self, selected_items: List):
         """Update action bar and prompt box based on selections."""
         current_panel = self._get_active_panel()
@@ -503,24 +516,32 @@ class ResearchWorkspace(QWidget):
         )
         self.prompt_box.set_selection_active(total_selected > 0)
 
-    def _get_active_panel(self) -> ItemsPanel:
-        """Return the currently active items panel."""
+    def _get_active_panel(self) -> Optional[ItemsPanel]:
+        """Return the currently active items panel, or None for Notebook."""
         idx = self.tabs.currentIndex()
+        if idx == 3:
+            return None
         return [self.prompts_panel, self.responses_panel, self.summaries_panel][idx]
 
     def _on_action_export(self):
         """Trigger export on the active panel."""
         panel = self._get_active_panel()
+        if not panel:
+            return
         panel._on_export()
 
     def _on_action_delete(self):
         """Trigger delete on the active panel."""
         panel = self._get_active_panel()
+        if not panel:
+            return
         panel.delete_selected()
 
     def _on_action_move(self):
         """Show menu to move selected items to another tab."""
         panel = self._get_active_panel()
+        if not panel:
+            return
         selected = panel.get_selected_items()
         if not selected:
             return

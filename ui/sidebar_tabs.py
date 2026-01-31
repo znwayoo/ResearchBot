@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PyQt6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor, QAction, QTextListFormat
+from PyQt6.QtGui import QColor, QFont, QTextBlockFormat, QTextCharFormat, QTextCursor, QTextFormat, QAction, QTextListFormat
 
 from config import CONFIG_DIR, DARK_THEME, PLATFORMS
 
@@ -1901,14 +1901,6 @@ class MarkdownNotebookTab(QWidget):
 
         row1_layout.addWidget(self._create_separator())
 
-        # Headers
-        self.h1_btn = self._create_toolbar_btn("H1", lambda: self._set_heading(1))
-        self.h2_btn = self._create_toolbar_btn("H2", lambda: self._set_heading(2))
-        self.h3_btn = self._create_toolbar_btn("H3", lambda: self._set_heading(3))
-        row1_layout.addWidget(self.h1_btn)
-        row1_layout.addWidget(self.h2_btn)
-        row1_layout.addWidget(self.h3_btn)
-
         row1_layout.addStretch()
 
         # Status label
@@ -1935,16 +1927,6 @@ class MarkdownNotebookTab(QWidget):
         self.number_btn = self._create_toolbar_btn("Numbered List", self._toggle_number_list)
         row2_layout.addWidget(self.bullet_btn)
         row2_layout.addWidget(self.number_btn)
-
-        row2_layout.addWidget(self._create_separator())
-
-        # Alignment
-        self.align_left_btn = self._create_toolbar_btn("Left", lambda: self._set_alignment(Qt.AlignmentFlag.AlignLeft))
-        self.align_center_btn = self._create_toolbar_btn("Center", lambda: self._set_alignment(Qt.AlignmentFlag.AlignCenter))
-        self.align_right_btn = self._create_toolbar_btn("Right", lambda: self._set_alignment(Qt.AlignmentFlag.AlignRight))
-        row2_layout.addWidget(self.align_left_btn)
-        row2_layout.addWidget(self.align_center_btn)
-        row2_layout.addWidget(self.align_right_btn)
 
         row2_layout.addStretch()
 
@@ -2013,8 +1995,28 @@ class MarkdownNotebookTab(QWidget):
         """)
         self.editor.setPlaceholderText("Start writing your notes here...")
         self.editor.setFont(QFont("Georgia", 14))
+
+        # Set default line spacing (1.15x for body text)
+        doc = self.editor.document()
+        doc.setDefaultStyleSheet(f"""
+            body {{ line-height: 1.15; }}
+            hr {{ border: none; border-top: 1px solid {DARK_THEME['border']}; margin: 8px 0; }}
+            blockquote {{
+                border-left: 3px solid {DARK_THEME['border']};
+                padding-left: 12px;
+                color: {DARK_THEME['text_secondary']};
+                font-style: italic;
+                margin: 8px 0;
+            }}
+        """)
+        default_block_fmt = QTextBlockFormat()
+        default_block_fmt.setLineHeight(115, 1)  # 1 = ProportionalHeight
+        cursor = self.editor.textCursor()
+        cursor.select(QTextCursor.SelectionType.Document)
+        cursor.setBlockFormat(default_block_fmt)
+
         self.editor.textChanged.connect(self._on_content_changed)
-        # Note: Removed cursorPositionChanged signal - was causing crashes
+        self.editor.cursorPositionChanged.connect(self._update_format_buttons)
 
         # Install event filter to handle Enter key for consistent formatting
         self.editor.installEventFilter(self)
@@ -2119,9 +2121,20 @@ class MarkdownNotebookTab(QWidget):
         cursor.mergeCharFormat(fmt)
 
     def _set_heading(self, level: int):
-        """Set the current paragraph as a heading."""
+        """Set the current paragraph as a heading using block-level heading format."""
         cursor = self.editor.textCursor()
-        cursor.select(QTextCursor.SelectionType.BlockUnderCursor)
+
+        # Set block-level heading with extra spacing
+        block_fmt = cursor.blockFormat()
+        block_fmt.setHeadingLevel(level)
+        block_fmt.setTopMargin(16)
+        block_fmt.setBottomMargin(8)
+        block_fmt.setLineHeight(150, 1)
+        cursor.setBlockFormat(block_fmt)
+
+        # Select only block text, not the block separator
+        cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+        cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
 
         fmt = QTextCharFormat()
         sizes = {1: 24, 2: 20, 3: 16}
@@ -2136,7 +2149,8 @@ class MarkdownNotebookTab(QWidget):
 
         # If there's a selection, reset the selection; otherwise reset current block
         if not cursor.hasSelection():
-            cursor.select(QTextCursor.SelectionType.BlockUnderCursor)
+            cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+            cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
 
         # Reset character format
         fmt = QTextCharFormat()
@@ -2154,6 +2168,11 @@ class MarkdownNotebookTab(QWidget):
         block_fmt = cursor.blockFormat()
         block_fmt.setIndent(0)
         block_fmt.setLeftMargin(0)
+        block_fmt.setTopMargin(0)
+        block_fmt.setBottomMargin(0)
+        block_fmt.setHeadingLevel(0)
+        block_fmt.setProperty(QTextFormat.Property.BlockQuoteLevel, 0)
+        block_fmt.setLineHeight(115, 1)
         block_fmt.setAlignment(Qt.AlignmentFlag.AlignLeft)
         cursor.setBlockFormat(block_fmt)
 
@@ -2210,19 +2229,27 @@ class MarkdownNotebookTab(QWidget):
 
         self.editor.setTextCursor(cursor)
 
-    def _set_alignment(self, alignment):
-        """Set text alignment for current paragraph."""
-        cursor = self.editor.textCursor()
-        block_fmt = cursor.blockFormat()
-        block_fmt.setAlignment(alignment)
-        cursor.setBlockFormat(block_fmt)
-
-
     def _update_format_buttons(self):
-        """Update toolbar button states - currently disabled to prevent crashes."""
-        # This method is intentionally simplified - button states are not auto-updated
-        # to prevent Qt signal/slot crashes during text editing
-        pass
+        """Update toolbar button checked states to reflect formatting at cursor."""
+        # Only read format state here, never modify document content
+        cursor = self.editor.textCursor()
+        fmt = cursor.charFormat()
+
+        self.bold_btn.blockSignals(True)
+        self.bold_btn.setChecked(fmt.fontWeight() == QFont.Weight.Bold)
+        self.bold_btn.blockSignals(False)
+
+        self.italic_btn.blockSignals(True)
+        self.italic_btn.setChecked(fmt.fontItalic())
+        self.italic_btn.blockSignals(False)
+
+        self.underline_btn.blockSignals(True)
+        self.underline_btn.setChecked(fmt.fontUnderline())
+        self.underline_btn.blockSignals(False)
+
+        self.strike_btn.blockSignals(True)
+        self.strike_btn.setChecked(fmt.fontStrikeOut())
+        self.strike_btn.blockSignals(False)
 
     def _on_content_changed(self):
         """Handle content changes and apply live markdown formatting."""
@@ -2260,11 +2287,13 @@ class MarkdownNotebookTab(QWidget):
                 char_fmt = cursor.charFormat()
                 block_fmt = cursor.blockFormat()
 
-                # Check for header (large font) or special styling
-                is_header = char_fmt.fontPointSize() >= 16
+                # Check for header (large font), blockquote, or special styling
+                is_header = block_fmt.headingLevel() > 0 or char_fmt.fontPointSize() >= 16
                 has_margin = block_fmt.leftMargin() > 0
+                quote_level = block_fmt.property(QTextFormat.Property.BlockQuoteLevel)
+                is_quote = quote_level and quote_level > 0
 
-                if is_header or has_margin:
+                if is_header or has_margin or is_quote:
                     # Let the default Enter happen first
                     self.editor.keyPressEvent(event)
 
@@ -2286,7 +2315,12 @@ class MarkdownNotebookTab(QWidget):
                     # Reset block format
                     new_block_fmt = new_cursor.blockFormat()
                     new_block_fmt.setLeftMargin(0)
+                    new_block_fmt.setTopMargin(0)
+                    new_block_fmt.setBottomMargin(0)
                     new_block_fmt.setIndent(0)
+                    new_block_fmt.setHeadingLevel(0)
+                    new_block_fmt.setProperty(QTextFormat.Property.BlockQuoteLevel, 0)
+                    new_block_fmt.setLineHeight(115, 1)
                     new_cursor.setBlockFormat(new_block_fmt)
 
                     self.editor.setTextCursor(new_cursor)
@@ -2389,6 +2423,14 @@ class MarkdownNotebookTab(QWidget):
         # Delete the markdown syntax and insert formatted text
         cursor.removeSelectedText()
 
+        # Set block-level heading with spacing
+        block_fmt = cursor.blockFormat()
+        block_fmt.setHeadingLevel(level)
+        block_fmt.setTopMargin(16)
+        block_fmt.setBottomMargin(8)
+        block_fmt.setLineHeight(150, 1)
+        cursor.setBlockFormat(block_fmt)
+
         fmt = QTextCharFormat()
         sizes = {1: 24, 2: 20, 3: 16}
         fmt.setFontPointSize(sizes.get(level, 14))
@@ -2454,20 +2496,16 @@ class MarkdownNotebookTab(QWidget):
         cursor.insertText(content, fmt)
 
     def _format_horizontal_rule(self, start, end, _match):
-        """Format horizontal rule ---."""
+        """Format horizontal rule --- using HTML hr for proper markdown round-trip."""
         cursor = self.editor.textCursor()
         cursor.setPosition(start)
         cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
 
-        # Replace with a visual separator line using unicode
         cursor.removeSelectedText()
-
-        fmt = QTextCharFormat()
-        fmt.setForeground(QColor(DARK_THEME['border']))
-        cursor.insertText("─" * 50, fmt)
+        cursor.insertHtml(f'<hr style="border: none; border-top: 1px solid {DARK_THEME["border"]};" />')
 
     def _format_quote(self, start, end, match):
-        """Format quote > text."""
+        """Format quote > text using proper blockquote for markdown round-trip."""
         content = match.group(1)
 
         cursor = self.editor.textCursor()
@@ -2476,12 +2514,13 @@ class MarkdownNotebookTab(QWidget):
 
         cursor.removeSelectedText()
 
-        # Set block format for quote
+        # Use proper blockquote property so toMarkdown() serializes as >
         block_fmt = cursor.blockFormat()
+        block_fmt.setProperty(QTextFormat.Property.BlockQuoteLevel, 1)
         block_fmt.setLeftMargin(20)
         cursor.setBlockFormat(block_fmt)
 
-        # Set character format
+        # Set character format for visual styling
         fmt = QTextCharFormat()
         fmt.setForeground(QColor(DARK_THEME['text_secondary']))
         fmt.setFontItalic(True)
@@ -2544,6 +2583,209 @@ class MarkdownNotebookTab(QWidget):
         self.status_label.setText("Ready")
         self.status_label.setStyleSheet(f"color: {DARK_THEME['text_secondary']}; font-size: 11px;")
 
+    def _apply_post_load_styling(self):
+        """Re-apply visual styling after loading markdown content."""
+        doc = self.editor.document()
+        block = doc.begin()
+        while block.isValid():
+            cursor = QTextCursor(block)
+            block_fmt = block.blockFormat()
+
+            modified = False
+            new_fmt = QTextBlockFormat(block_fmt)
+
+            heading_level = block_fmt.headingLevel()
+            if heading_level > 0:
+                new_fmt.setTopMargin(16)
+                new_fmt.setBottomMargin(8)
+                new_fmt.setLineHeight(150, 1)
+                # Select only block text content, not the block separator
+                sizes = {1: 24, 2: 20, 3: 16}
+                char_fmt = QTextCharFormat()
+                char_fmt.setFontPointSize(sizes.get(heading_level, 14))
+                char_fmt.setFontWeight(QFont.Weight.Bold)
+                cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+                cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+                cursor.mergeCharFormat(char_fmt)
+                modified = True
+
+            quote_level = block_fmt.property(QTextFormat.Property.BlockQuoteLevel)
+            if quote_level and quote_level > 0:
+                new_fmt.setLeftMargin(20)
+                char_fmt = QTextCharFormat()
+                char_fmt.setForeground(QColor(DARK_THEME['text_secondary']))
+                char_fmt.setFontItalic(True)
+                cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+                cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+                cursor.mergeCharFormat(char_fmt)
+                modified = True
+
+            if not modified:
+                new_fmt.setLineHeight(115, 1)
+
+            cursor.setBlockFormat(new_fmt)
+            block = block.next()
+
+    def _load_markdown_content(self, content):
+        """Load markdown content into the editor, preserving blank lines.
+
+        Parses markdown line by line and builds the document directly so
+        blank lines are preserved as empty blocks.
+        """
+        import re
+
+        self.editor.clear()
+        cursor = self.editor.textCursor()
+        lines = content.split('\n')
+        # Strip single trailing newline that our save adds
+        if lines and lines[-1] == '':
+            lines = lines[:-1]
+
+        first_block = True
+
+        # Default formats to reset to between blocks
+        default_block_fmt = QTextBlockFormat()
+        default_block_fmt.setLineHeight(115, 1)
+        default_char_fmt = QTextCharFormat()
+        default_char_fmt.setFontPointSize(14)
+        default_char_fmt.setFontFamily("Georgia")
+        default_char_fmt.setForeground(QColor(DARK_THEME['text_primary']))
+        default_char_fmt.setFontWeight(QFont.Weight.Normal)
+        default_char_fmt.setFontItalic(False)
+        default_char_fmt.setFontStrikeOut(False)
+        default_char_fmt.setFontUnderline(False)
+
+        for line in lines:
+            if not first_block:
+                # Reset format before inserting new block to prevent leaking
+                cursor.setCharFormat(default_char_fmt)
+                cursor.insertBlock(default_block_fmt, default_char_fmt)
+            first_block = False
+
+            stripped = line.strip()
+
+            # Empty line = blank line
+            if not stripped:
+                continue
+
+            # Heading: # ## ###
+            heading_match = re.match(r'^(#{1,3})\s+(.+)$', stripped)
+            if heading_match:
+                level = len(heading_match.group(1))
+                text = heading_match.group(2)
+                block_fmt = cursor.blockFormat()
+                block_fmt.setHeadingLevel(level)
+                block_fmt.setTopMargin(16)
+                block_fmt.setBottomMargin(8)
+                block_fmt.setLineHeight(150, 1)
+                cursor.setBlockFormat(block_fmt)
+                fmt = QTextCharFormat()
+                sizes = {1: 24, 2: 20, 3: 16}
+                fmt.setFontPointSize(sizes.get(level, 14))
+                fmt.setFontWeight(QFont.Weight.Bold)
+                self._insert_inline_markdown(cursor, text, base_fmt=fmt)
+                continue
+
+            # Blockquote: > text
+            quote_match = re.match(r'^>\s*(.*)$', stripped)
+            if quote_match:
+                text = quote_match.group(1)
+                block_fmt = cursor.blockFormat()
+                block_fmt.setProperty(QTextFormat.Property.BlockQuoteLevel, 1)
+                block_fmt.setLeftMargin(20)
+                cursor.setBlockFormat(block_fmt)
+                fmt = QTextCharFormat()
+                fmt.setForeground(QColor(DARK_THEME['text_secondary']))
+                fmt.setFontItalic(True)
+                fmt.setFontPointSize(14)
+                cursor.insertText(text, fmt)
+                continue
+
+            # Horizontal rule: ---
+            if re.match(r'^-{3,}$', stripped):
+                cursor.insertHtml(
+                    f'<hr style="border: none; border-top: 1px solid {DARK_THEME["border"]};" />'
+                )
+                continue
+
+            # Unordered list: - or * item
+            bullet_match = re.match(r'^[-*]\s+(.+)$', stripped)
+            if bullet_match:
+                text = bullet_match.group(1)
+                list_fmt = QTextListFormat()
+                list_fmt.setStyle(QTextListFormat.Style.ListDisc)
+                cursor.createList(list_fmt)
+                self._insert_inline_markdown(cursor, text)
+                continue
+
+            # Ordered list: 1. item
+            num_match = re.match(r'^\d+\.\s+(.+)$', stripped)
+            if num_match:
+                text = num_match.group(1)
+                list_fmt = QTextListFormat()
+                list_fmt.setStyle(QTextListFormat.Style.ListDecimal)
+                cursor.createList(list_fmt)
+                self._insert_inline_markdown(cursor, text)
+                continue
+
+            # Regular paragraph with inline formatting
+            self._insert_inline_markdown(cursor, stripped)
+
+    def _insert_inline_markdown(self, cursor, text, base_fmt=None):
+        """Parse inline markdown (bold, italic, strikethrough) and insert formatted text."""
+        import re
+
+        if base_fmt is None:
+            base_fmt = QTextCharFormat()
+            base_fmt.setFontPointSize(14)
+            base_fmt.setFontFamily("Georgia")
+            base_fmt.setForeground(QColor(DARK_THEME['text_primary']))
+
+        # Pattern matches inline markdown formats or plain text
+        pattern = re.compile(
+            r'(`([^`]+)`)'            # inline code
+            r'|(\*\*(.+?)\*\*)'      # bold
+            r'|(\*(.+?)\*)'          # italic
+            r'|(~~(.+?)~~)'          # strikethrough
+            r'|(<u>(.+?)</u>)'       # underline
+            r'|([^*~`<]+)'           # plain text
+            r'|([*~`<])'            # leftover markers
+        )
+
+        for m in pattern.finditer(text):
+            if m.group(2) is not None:
+                # Inline code
+                fmt = QTextCharFormat(base_fmt)
+                fmt.setFontFamily("Courier New")
+                fmt.setBackground(QColor(DARK_THEME['surface_light']))
+                cursor.insertText(m.group(2), fmt)
+            elif m.group(4) is not None:
+                # Bold
+                fmt = QTextCharFormat(base_fmt)
+                fmt.setFontWeight(QFont.Weight.Bold)
+                cursor.insertText(m.group(4), fmt)
+            elif m.group(6) is not None:
+                # Italic
+                fmt = QTextCharFormat(base_fmt)
+                fmt.setFontItalic(True)
+                cursor.insertText(m.group(6), fmt)
+            elif m.group(8) is not None:
+                # Strikethrough
+                fmt = QTextCharFormat(base_fmt)
+                fmt.setFontStrikeOut(True)
+                cursor.insertText(m.group(8), fmt)
+            elif m.group(10) is not None:
+                # Underline
+                fmt = QTextCharFormat(base_fmt)
+                fmt.setFontUnderline(True)
+                cursor.insertText(m.group(10), fmt)
+            elif m.group(11) is not None:
+                # Plain text
+                cursor.insertText(m.group(11), base_fmt)
+            elif m.group(12) is not None:
+                # Leftover marker char
+                cursor.insertText(m.group(12), base_fmt)
+
     def _open_document(self):
         """Open an existing document (supports .md and .txt)."""
         if self._is_modified:
@@ -2573,8 +2815,10 @@ class MarkdownNotebookTab(QWidget):
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
 
-                # Load as plain text - preserves the file content as-is
-                self.editor.setPlainText(content)
+                # Block signals during load to prevent _apply_live_markdown interference
+                self.editor.blockSignals(True)
+                self._load_markdown_content(content)
+                self.editor.blockSignals(False)
 
                 # Extract title from filename
                 from pathlib import Path
@@ -2586,6 +2830,213 @@ class MarkdownNotebookTab(QWidget):
                 self.status_label.setStyleSheet(f"color: {DARK_THEME['success']}; font-size: 11px;")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to open file: {str(e)}")
+
+    def _document_to_markdown(self):
+        """Convert document to markdown by parsing the HTML output.
+
+        Avoids all direct QTextDocument block/fragment iteration which
+        causes segfaults in PyQt6. Uses toHtml() (safe) and converts
+        the HTML to markdown by walking block-level elements in order.
+        """
+        import re
+        from html import unescape
+
+        html = self.editor.toHtml()
+
+        # Extract body content
+        body_match = re.search(r'<body[^>]*>(.*)</body>', html, re.DOTALL)
+        if not body_match:
+            return self.editor.toPlainText() + '\n'
+
+        body = body_match.group(1).strip()
+        lines = []
+
+        # Match all block-level elements in document order
+        block_re = re.compile(
+            r'<(h[1-3])([^>]*)>(.*?)</\1>'
+            r'|<(blockquote)[^>]*>(.*?)</\4>'
+            r'|<(ol)[^>]*>(.*?)</\6>'
+            r'|<(ul)[^>]*>(.*?)</\8>'
+            r'|<(hr)[^>]*/?\s*>'
+            r'|<(p)([^>]*)>(.*?)</p>',
+            re.DOTALL
+        )
+
+        for m in block_re.finditer(body):
+            # Heading h1-h3
+            if m.group(1):
+                tag = m.group(1)
+                level = int(tag[1])
+                inner = self._html_inline_to_md(m.group(3), skip_bold=True)
+                lines.append(f'{"#" * level} {inner}')
+
+            # Blockquote
+            elif m.group(4):
+                inner_html = m.group(5)
+                paragraphs = re.findall(r'<p[^>]*>(.*?)</p>', inner_html, re.DOTALL)
+                if paragraphs:
+                    for p in paragraphs:
+                        inner = self._html_inline_to_md(p, skip_italic=True)
+                        if inner:
+                            lines.append(f'> {inner}')
+                else:
+                    inner = self._html_inline_to_md(inner_html, skip_italic=True)
+                    if inner:
+                        lines.append(f'> {inner}')
+
+            # Ordered list
+            elif m.group(6):
+                items = re.findall(r'<li[^>]*>(.*?)</li>', m.group(7), re.DOTALL)
+                for i, item in enumerate(items, 1):
+                    inner = self._html_inline_to_md(item)
+                    lines.append(f'{i}. {inner}')
+
+            # Unordered list
+            elif m.group(8):
+                items = re.findall(r'<li[^>]*>(.*?)</li>', m.group(9), re.DOTALL)
+                for item in items:
+                    inner = self._html_inline_to_md(item)
+                    lines.append(f'- {inner}')
+
+            # Horizontal rule
+            elif m.group(10):
+                lines.append('---')
+
+            # Paragraph
+            elif m.group(11):
+                inner = m.group(13)
+
+                # Empty paragraph = blank line
+                if not inner.strip() or inner.strip() in ('<br />', '<br/>', '<br>'):
+                    lines.append('')
+                    continue
+
+                # Horizontal rule unicode
+                plain = re.sub(r'<[^>]+>', '', inner).strip()
+                if plain and all(c in '\u2500\u2501\u2502\u2503' for c in plain):
+                    lines.append('---')
+                    continue
+
+                inner_md = self._html_inline_to_md(inner)
+                lines.append(inner_md)
+
+        if not lines:
+            return self.editor.toPlainText() + '\n'
+
+        # Strip trailing empty lines
+        while lines and lines[-1] == '':
+            lines.pop()
+
+        return '\n'.join(lines) + '\n'
+
+    def _html_inline_to_md(self, html_text, skip_bold=False, skip_italic=False):
+        """Convert inline HTML formatting to markdown syntax."""
+        import re
+        from html import unescape
+
+        text = html_text
+
+        # Inline code (font-family monospace/courier)
+        def code_repl(m):
+            inner = re.sub(r'<[^>]+>', '', m.group(1))
+            return f'`{inner}`'
+        text = re.sub(r'<span[^>]*font-family:[^>]*[Cc]ourier[^>]*>(.*?)</span>', code_repl, text)
+
+        # Bold
+        if not skip_bold:
+            def bold_repl(m):
+                inner = re.sub(r'<[^>]+>', '', m.group(1))
+                return f'**{inner}**'
+            text = re.sub(r'<span[^>]*font-weight:(?:bold|[6-9]\d\d)[^>]*>(.*?)</span>', bold_repl, text)
+            text = re.sub(r'<b>(.*?)</b>', bold_repl, text)
+            text = re.sub(r'<strong>(.*?)</strong>', bold_repl, text)
+
+        # Italic
+        if not skip_italic:
+            def italic_repl(m):
+                inner = re.sub(r'<[^>]+>', '', m.group(1))
+                return f'*{inner}*'
+            text = re.sub(r'<span[^>]*font-style:italic[^>]*>(.*?)</span>', italic_repl, text)
+            text = re.sub(r'<i>(.*?)</i>', italic_repl, text)
+            text = re.sub(r'<em>(.*?)</em>', italic_repl, text)
+
+        # Strikethrough
+        def strike_repl(m):
+            inner = re.sub(r'<[^>]+>', '', m.group(1))
+            return f'~~{inner}~~'
+        text = re.sub(r'<span[^>]*text-decoration:[^>]*line-through[^>]*>(.*?)</span>', strike_repl, text)
+        text = re.sub(r'<s>(.*?)</s>', strike_repl, text)
+        text = re.sub(r'<del>(.*?)</del>', strike_repl, text)
+
+        # Underline
+        def underline_repl(m):
+            inner = re.sub(r'<[^>]+>', '', m.group(1))
+            return f'<u>{inner}</u>'
+        text = re.sub(r'<span[^>]*text-decoration:[^>]*underline[^>]*>(.*?)</span>', underline_repl, text)
+
+        # Strip remaining span tags
+        text = re.sub(r'</?span[^>]*>', '', text)
+        # Strip br tags
+        text = re.sub(r'<br\s*/?>', '', text)
+
+        text = unescape(text)
+        return text.strip()
+
+    def _strip_formatted_spaces(self):
+        """Strip leading/trailing spaces from bold/italic/strikethrough runs.
+
+        Markdown requires markers like ** to be adjacent to text. If a user
+        bolds ' hello ', toMarkdown() produces '** hello **' which is invalid.
+        This trims spaces so it becomes ' **hello** ' instead.
+        """
+        doc = self.editor.document()
+        cursor = QTextCursor(doc)
+        cursor.beginEditBlock()
+
+        block = doc.begin()
+        while block.isValid():
+            it = block.begin()
+            while not it.atEnd():
+                fragment = it.fragment()
+                if fragment.isValid():
+                    fmt = fragment.charFormat()
+                    is_formatted = (
+                        fmt.fontWeight() == QFont.Weight.Bold
+                        or fmt.fontItalic()
+                        or fmt.fontStrikeOut()
+                    )
+                    if is_formatted:
+                        text = fragment.text()
+                        stripped = text.strip()
+                        if stripped and stripped != text:
+                            lead = len(text) - len(text.lstrip())
+                            trail = len(text) - len(text.rstrip())
+                            frag_start = fragment.position()
+                            frag_end = frag_start + fragment.length()
+
+                            # Remove formatting from leading spaces
+                            if lead > 0:
+                                cursor.setPosition(frag_start)
+                                cursor.setPosition(frag_start + lead, QTextCursor.MoveMode.KeepAnchor)
+                                plain_fmt = QTextCharFormat()
+                                plain_fmt.setFontWeight(QFont.Weight.Normal)
+                                plain_fmt.setFontItalic(False)
+                                plain_fmt.setFontStrikeOut(False)
+                                cursor.setCharFormat(plain_fmt)
+
+                            # Remove formatting from trailing spaces
+                            if trail > 0:
+                                cursor.setPosition(frag_end - trail)
+                                cursor.setPosition(frag_end, QTextCursor.MoveMode.KeepAnchor)
+                                plain_fmt = QTextCharFormat()
+                                plain_fmt.setFontWeight(QFont.Weight.Normal)
+                                plain_fmt.setFontItalic(False)
+                                plain_fmt.setFontStrikeOut(False)
+                                cursor.setCharFormat(plain_fmt)
+                it += 1
+            block = block.next()
+
+        cursor.endEditBlock()
 
     def _save_document(self):
         """Save the current document as Markdown."""
@@ -2606,8 +3057,7 @@ class MarkdownNotebookTab(QWidget):
 
         if file_path:
             try:
-                # Save plain text directly - preserves whatever the user typed as-is
-                content = self.editor.toPlainText()
+                content = self._document_to_markdown()
 
                 with open(file_path, 'w', encoding='utf-8') as f:
                     f.write(content)
@@ -2616,6 +3066,9 @@ class MarkdownNotebookTab(QWidget):
                 self._is_modified = False
                 from pathlib import Path
                 self.file_label.setText(Path(file_path).name)
+                # Update title box if it was empty
+                if not self.title_input.text().strip():
+                    self.title_input.setText(Path(file_path).stem)
                 self.status_label.setText("Saved")
                 self.status_label.setStyleSheet(f"color: {DARK_THEME['success']}; font-size: 11px;")
             except Exception as e:
@@ -2969,8 +3422,6 @@ class BrowserTabs(QWidget):
         super().__init__(parent)
         self.platform_tabs: Dict[str, PlatformTab] = {}
         self.log_tab: Optional[LogTab] = None
-        self.notebook_tab: Optional[MarkdownNotebookTab] = None
-
         self._setup_ui()
 
     def _setup_ui(self):
@@ -3017,10 +3468,6 @@ class BrowserTabs(QWidget):
             self.platform_tabs[platform] = tab
             self.tabs.addTab(tab, platform_names.get(platform, platform.title()))
 
-        # Add Markdown Notebook tab
-        self.notebook_tab = MarkdownNotebookTab()
-        self.tabs.addTab(self.notebook_tab, "Notebook")
-
         # Add Downloads tab
         self.downloads_tab = DownloadsTab()
         self.downloads_tab.load_saved_directory()
@@ -3063,15 +3510,11 @@ class BrowserTabs(QWidget):
 
     def show_log_tab(self):
         """Switch to the log tab (at the end)."""
-        self.tabs.setCurrentIndex(len(self.platform_tabs) + 2)
-
-    def show_notebook_tab(self):
-        """Switch to the notebook tab."""
-        self.tabs.setCurrentIndex(len(self.platform_tabs))
+        self.tabs.setCurrentIndex(len(self.platform_tabs) + 1)
 
     def show_downloads_tab(self):
         """Switch to the downloads tab."""
-        self.tabs.setCurrentIndex(len(self.platform_tabs) + 1)
+        self.tabs.setCurrentIndex(len(self.platform_tabs))
 
     def clear_logs(self):
         """Clear the log output."""
