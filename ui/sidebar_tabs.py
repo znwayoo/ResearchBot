@@ -1996,10 +1996,8 @@ class MarkdownNotebookTab(QWidget):
         self.editor.setPlaceholderText("Start writing your notes here...")
         self.editor.setFont(QFont("Georgia", 14))
 
-        # Set default line spacing (1.15x for body text)
         doc = self.editor.document()
         doc.setDefaultStyleSheet(f"""
-            body {{ line-height: 1.15; }}
             hr {{ border: none; border-top: 1px solid {DARK_THEME['border']}; margin: 8px 0; }}
             blockquote {{
                 border-left: 3px solid {DARK_THEME['border']};
@@ -2010,7 +2008,7 @@ class MarkdownNotebookTab(QWidget):
             }}
         """)
         default_block_fmt = QTextBlockFormat()
-        default_block_fmt.setLineHeight(115, 1)  # 1 = ProportionalHeight
+        default_block_fmt.setLineHeight(130, 1)  # 1 = ProportionalHeight
         cursor = self.editor.textCursor()
         cursor.select(QTextCursor.SelectionType.Document)
         cursor.setBlockFormat(default_block_fmt)
@@ -2142,6 +2140,7 @@ class MarkdownNotebookTab(QWidget):
         fmt.setFontWeight(QFont.Weight.Bold)
 
         cursor.mergeCharFormat(fmt)
+        self.editor.setFocus()
 
     def _set_normal(self):
         """Reset all formatting to normal text."""
@@ -2172,7 +2171,7 @@ class MarkdownNotebookTab(QWidget):
         block_fmt.setBottomMargin(0)
         block_fmt.setHeadingLevel(0)
         block_fmt.setProperty(QTextFormat.Property.BlockQuoteLevel, 0)
-        block_fmt.setLineHeight(115, 1)
+        block_fmt.setLineHeight(130, 1)
         block_fmt.setAlignment(Qt.AlignmentFlag.AlignLeft)
         cursor.setBlockFormat(block_fmt)
 
@@ -2182,6 +2181,7 @@ class MarkdownNotebookTab(QWidget):
             current_list.remove(cursor.block())
 
         self.editor.setTextCursor(cursor)
+        self.editor.setFocus()
 
     def _toggle_bullet_list(self):
         """Toggle bullet list for current line."""
@@ -2205,6 +2205,7 @@ class MarkdownNotebookTab(QWidget):
             cursor.createList(list_fmt)
 
         self.editor.setTextCursor(cursor)
+        self.editor.setFocus()
 
     def _toggle_number_list(self):
         """Toggle numbered list for current line."""
@@ -2228,6 +2229,7 @@ class MarkdownNotebookTab(QWidget):
             cursor.createList(list_fmt)
 
         self.editor.setTextCursor(cursor)
+        self.editor.setFocus()
 
     def _update_format_buttons(self):
         """Update toolbar button checked states to reflect formatting at cursor."""
@@ -2292,14 +2294,19 @@ class MarkdownNotebookTab(QWidget):
                 has_margin = block_fmt.leftMargin() > 0
                 quote_level = block_fmt.property(QTextFormat.Property.BlockQuoteLevel)
                 is_quote = quote_level and quote_level > 0
+                is_list = cursor.currentList() is not None
+                needs_reset = is_header or has_margin or is_quote
 
-                if is_header or has_margin or is_quote:
-                    # Let the default Enter happen first
-                    self.editor.keyPressEvent(event)
+                if not needs_reset and not is_list:
+                    return False
 
-                    # Then reset formatting for the new line
-                    new_cursor = self.editor.textCursor()
+                # Let the default Enter happen first
+                self.editor.keyPressEvent(event)
 
+                # Then reset formatting for the new line
+                new_cursor = self.editor.textCursor()
+
+                if needs_reset:
                     # Reset character format to normal
                     fmt = QTextCharFormat()
                     fmt.setFontPointSize(14)
@@ -2312,7 +2319,7 @@ class MarkdownNotebookTab(QWidget):
                     fmt.clearBackground()
                     new_cursor.setCharFormat(fmt)
 
-                    # Reset block format
+                    # Reset block format for headers/quotes
                     new_block_fmt = new_cursor.blockFormat()
                     new_block_fmt.setLeftMargin(0)
                     new_block_fmt.setTopMargin(0)
@@ -2320,13 +2327,21 @@ class MarkdownNotebookTab(QWidget):
                     new_block_fmt.setIndent(0)
                     new_block_fmt.setHeadingLevel(0)
                     new_block_fmt.setProperty(QTextFormat.Property.BlockQuoteLevel, 0)
-                    new_block_fmt.setLineHeight(115, 1)
+                    new_block_fmt.setLineHeight(130, 1)
                     new_cursor.setBlockFormat(new_block_fmt)
 
-                    self.editor.setTextCursor(new_cursor)
-                    return True  # Event handled
+                self.editor.setTextCursor(new_cursor)
+                return True  # Event handled
 
         return super().eventFilter(obj, event)
+
+    def _ensure_line_height(self):
+        """Set line height on the current block after Enter."""
+        cursor = self.editor.textCursor()
+        block_fmt = cursor.blockFormat()
+        if block_fmt.lineHeight() != 130:
+            block_fmt.setLineHeight(130, 1)
+            cursor.setBlockFormat(block_fmt)
 
     def _apply_live_markdown(self):
         """Apply Notion-like live markdown formatting when patterns are completed."""
@@ -2621,7 +2636,7 @@ class MarkdownNotebookTab(QWidget):
                 modified = True
 
             if not modified:
-                new_fmt.setLineHeight(115, 1)
+                new_fmt.setLineHeight(130, 1)
 
             cursor.setBlockFormat(new_fmt)
             block = block.next()
@@ -2647,7 +2662,7 @@ class MarkdownNotebookTab(QWidget):
 
         # Default formats to reset to between blocks
         default_block_fmt = QTextBlockFormat()
-        default_block_fmt.setLineHeight(115, 1)
+        default_block_fmt.setLineHeight(130, 1)
         default_char_fmt = QTextCharFormat()
         default_char_fmt.setFontPointSize(14)
         default_char_fmt.setFontFamily("Georgia")
