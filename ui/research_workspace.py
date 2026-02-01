@@ -49,6 +49,7 @@ class ResearchWorkspace(QWidget):
         self._setup_ui()
         self._connect_signals()
         self._load_data()
+        self.prompt_box.set_active_tab(0)
 
     def _setup_ui(self):
         self.setStyleSheet(f"background-color: {DARK_THEME['background']};")
@@ -565,7 +566,6 @@ class ResearchWorkspace(QWidget):
         def on_fill_complete(result):
             if result and ("sent" in str(result).lower() or "filled" in str(result).lower()):
                 self.statusUpdate.emit(f"Summarization request sent to {platform}")
-                self.responses_panel.clear_selection()
             else:
                 self.statusUpdate.emit(f"Failed to send: {result}")
 
@@ -614,10 +614,12 @@ class ResearchWorkspace(QWidget):
 
     def _on_tab_changed(self):
         """Handle tab switching, hiding action bar and prompt box for Notebook."""
-        is_notebook = self.tabs.currentIndex() == 3
+        tab_index = self.tabs.currentIndex()
+        is_notebook = tab_index == 3
         self.action_bar.setVisible(not is_notebook)
         self.prompt_box.setVisible(not is_notebook)
         if not is_notebook:
+            self.prompt_box.set_active_tab(tab_index)
             self._on_selection_changed([])
 
     def _on_selection_changed(self, selected_items: List):

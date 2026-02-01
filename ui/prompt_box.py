@@ -172,8 +172,8 @@ class PromptManagementBox(QWidget):
 
         file_header.addStretch()
 
-        upload_btn = QPushButton("Upload Files")
-        upload_btn.setStyleSheet(f"""
+        self.upload_btn = QPushButton("Upload Files")
+        self.upload_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {DARK_THEME['accent']};
                 color: white;
@@ -184,9 +184,13 @@ class PromptManagementBox(QWidget):
             QPushButton:hover {{
                 background-color: {DARK_THEME['accent_hover']};
             }}
+            QPushButton:disabled {{
+                background-color: {DARK_THEME['border']};
+                color: {DARK_THEME['text_secondary']};
+            }}
         """)
-        upload_btn.clicked.connect(self._open_file_dialog)
-        file_header.addWidget(upload_btn)
+        self.upload_btn.clicked.connect(self._open_file_dialog)
+        file_header.addWidget(self.upload_btn)
 
         file_layout.addLayout(file_header)
 
@@ -260,6 +264,9 @@ class PromptManagementBox(QWidget):
             QPushButton:hover {{
                 background-color: {DARK_THEME['accent_hover']};
             }}
+            QPushButton:disabled {{
+                background-color: {DARK_THEME['border']};
+            }}
         """)
         self.grab_btn.clicked.connect(self.grabRequested.emit)
         button_layout.addWidget(self.grab_btn)
@@ -276,6 +283,9 @@ class PromptManagementBox(QWidget):
             }}
             QPushButton:hover {{
                 background-color: #F57C00;
+            }}
+            QPushButton:disabled {{
+                background-color: {DARK_THEME['border']};
             }}
         """)
         self.summarize_btn.clicked.connect(self.summarizeRequested.emit)
@@ -295,6 +305,9 @@ class PromptManagementBox(QWidget):
             }}
             QPushButton:hover {{
                 background-color: #7B1FA2;
+            }}
+            QPushButton:disabled {{
+                background-color: {DARK_THEME['border']};
             }}
         """)
         self.save_btn.clicked.connect(self.savePromptRequested.emit)
@@ -561,6 +574,26 @@ class PromptManagementBox(QWidget):
         self.file_chips.clear()
         self._update_file_count()
         self.filesChanged.emit([])
+
+    def set_active_tab(self, tab_index: int):
+        """Update button states based on the active workspace tab.
+
+        0 = Prompts: Send, Save as Prompt, Upload Files active
+        1 = Responses: Grab, Summarize active
+        2 = Summaries: Grab active
+        3 = Notebook: handled separately (hidden)
+        """
+        is_prompts = tab_index == 0
+        is_responses = tab_index == 1
+        is_summaries = tab_index == 2
+
+        self.send_btn.setEnabled(is_prompts)
+        self.save_btn.setEnabled(is_prompts)
+        self.upload_btn.setEnabled(is_prompts)
+        self.no_reference_checkbox.setEnabled(is_prompts)
+
+        self.grab_btn.setEnabled(is_responses or is_summaries)
+        self.summarize_btn.setEnabled(is_responses)
 
     def is_no_reference(self) -> bool:
         return self.no_reference_checkbox.isChecked()

@@ -30,8 +30,9 @@ ResearchBot embeds browser tabs for ChatGPT, Gemini, Perplexity, Claude, and Goo
 - Drag and drop reordering with smooth animations and persistent ordering
 - Category and color filters with live item counts
 - Multi-select with bulk delete, export, and move operations
-- Persistent selections across sends so you can reuse the same prompts on multiple platforms
+- Persistent selections across sends and summarize so you can reuse the same items on multiple platforms
 - Clear Selection button to deselect all items when done
+- Context-aware buttons that light up or gray out based on the active tab (Send and Save on Prompts, Grab and Summarize on Responses, Grab on Summaries)
 - Move items between Prompts, Responses, and Summaries tabs
 - Copy pill content to clipboard
 
@@ -50,6 +51,7 @@ ResearchBot embeds browser tabs for ChatGPT, Gemini, Perplexity, Claude, and Goo
 ### Markdown Notebook
 - Built-in WYSIWYG editor with bold, italic, underline, strikethrough, headings, lists, and alignment
 - Open and save Markdown files with automatic format conversion
+- Create Prompt button converts notebook content (with markdown formatting) directly into a prompt pill
 - Real-time word and character count
 
 ### Downloads Manager
