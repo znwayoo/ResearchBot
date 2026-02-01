@@ -5,6 +5,7 @@ from datetime import datetime
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QPoint
 from PyQt6.QtGui import QPainter, QColor, QPen, QPolygon
 from PyQt6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDialog,
     QFrame,
@@ -272,8 +273,29 @@ class ItemEditorDialog(QDialog):
         color_layout.addLayout(color_container)
         layout.addLayout(color_layout)
 
+        content_row = QHBoxLayout()
         content_label = QLabel("Content:")
-        layout.addWidget(content_label)
+        content_row.addWidget(content_label)
+        content_row.addStretch()
+
+        self.copy_btn = QPushButton("Copy")
+        self.copy_btn.setFixedHeight(24)
+        self.copy_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DARK_THEME['surface_light']};
+                color: {DARK_THEME['text_primary']};
+                border: none;
+                border-radius: 4px;
+                padding: 2px 12px;
+                font-size: 11px;
+            }}
+            QPushButton:hover {{
+                background-color: {DARK_THEME['border']};
+            }}
+        """)
+        self.copy_btn.clicked.connect(self._copy_content)
+        content_row.addWidget(self.copy_btn)
+        layout.addLayout(content_row)
 
         self.content_edit = QPlainTextEdit()
         self.content_edit.setPlaceholderText("Enter content...")
@@ -407,6 +429,13 @@ class ItemEditorDialog(QDialog):
             self.category_combo.setCurrentIndex(index)
         else:
             self.category_combo.setCurrentText(current)
+
+    def _copy_content(self):
+        """Copy content to clipboard with brief visual feedback."""
+        text = self.content_edit.toPlainText()
+        QApplication.clipboard().setText(text)
+        self.copy_btn.setText("Copied!")
+        QTimer.singleShot(1500, lambda: self.copy_btn.setText("Copy"))
 
     def _on_color_selected(self, color_name: str):
         self.selected_color = color_name

@@ -103,7 +103,7 @@ class ItemsPanel(QWidget):
         self.storage = storage
         self.items: List = []
         self.item_buttons: List[ItemButton] = []
-        self._selected_ids: set = set()  # Track selection by ID
+        self._selected_ids: list = []  # Track selection by ID (ordered)
 
         # Drag state - SortableJS-inspired
         self._dragged_item = None
@@ -290,7 +290,8 @@ class ItemsPanel(QWidget):
                 break
 
         if item.id in self._selected_ids:
-            self._selected_ids.discard(item.id)
+            self._selected_ids.remove(item.id)
+            self._update_order_badges()
             self._update_selection_label()
             self.selectionChanged.emit(self.selected_items)
 
@@ -349,6 +350,7 @@ class ItemsPanel(QWidget):
             self.flow_container.addLayout(current_row)
 
         self.flow_container.addStretch()
+        self._update_order_badges()
         self._refresh_filter_counts()
         self._apply_filters()
 
@@ -414,17 +416,31 @@ class ItemsPanel(QWidget):
 
     @property
     def selected_items(self) -> List:
-        """Build selected items list from IDs, always referencing current items."""
-        return [item for item in self.items if item.id in self._selected_ids]
+        """Build selected items list ordered by selection order."""
+        id_to_item = {item.id: item for item in self.items}
+        return [id_to_item[sid] for sid in self._selected_ids if sid in id_to_item]
 
     def _on_selection_changed(self, item, selected: bool):
         if selected:
-            self._selected_ids.add(item.id)
+            if item.id not in self._selected_ids:
+                self._selected_ids.append(item.id)
         else:
-            self._selected_ids.discard(item.id)
+            if item.id in self._selected_ids:
+                self._selected_ids.remove(item.id)
 
+        self._update_order_badges()
         self._update_selection_label()
         self.selectionChanged.emit(self.selected_items)
+
+    def _update_order_badges(self):
+        """Update order badges on all buttons based on selection order."""
+        selected_set = set(self._selected_ids)
+        id_to_order = {sid: i + 1 for i, sid in enumerate(self._selected_ids)}
+        for btn in self.item_buttons:
+            if btn.item.id in selected_set:
+                btn.set_order_number(id_to_order[btn.item.id])
+            else:
+                btn.set_order_number(None)
 
     def _update_selection_label(self):
         # Selection UI is managed by research_workspace
@@ -478,6 +494,7 @@ class ItemsPanel(QWidget):
     def clear_selection(self):
         for btn in self.item_buttons:
             btn.set_selected(False)
+            btn.set_order_number(None)
         self._selected_ids.clear()
         self._update_selection_label()
         self.selectionChanged.emit([])

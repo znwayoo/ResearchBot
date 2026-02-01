@@ -382,7 +382,7 @@ class ResearchWorkspace(QWidget):
                 summary_item = SummaryItem(
                     title=title,
                     content=response_text,
-                    category="Results Synthesis",
+                    category="Uncategorized",
                     color="Green",
                     source_responses=source_ids,
                     platform=platform,
@@ -485,7 +485,7 @@ class ResearchWorkspace(QWidget):
             summary_item = SummaryItem(
                 title=title,
                 content=response_text,
-                category="Results Synthesis",
+                category="Uncategorized",
                 color="Green",
                 source_responses=source_ids,
                 platform=platform,

@@ -47,6 +47,7 @@ class ItemButton(QFrame):
         self.item = item
         self._selected = False
         self._drag_start_pos = None
+        self._order_badge = None
 
         self._setup_ui()
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -219,6 +220,31 @@ class ItemButton(QFrame):
         menu.addAction(delete_action)
 
         menu.exec(self.mapToGlobal(position))
+
+    def set_order_number(self, n: int | None):
+        """Show or hide the selection order badge."""
+        if n is not None:
+            if self._order_badge is None:
+                self._order_badge = QLabel(self)
+                self._order_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                self._order_badge.setFixedSize(18, 18)
+                self._order_badge.setStyleSheet("""
+                    QLabel {
+                        background-color: #3A3A3A;
+                        color: #FFFFFF;
+                        font-size: 10px;
+                        font-weight: bold;
+                        border: 2px solid #FFFFFF;
+                        border-radius: 9px;
+                    }
+                """)
+            self._order_badge.setText(str(n))
+            self._order_badge.move(-4, -4)
+            self._order_badge.show()
+            self._order_badge.raise_()
+        else:
+            if self._order_badge is not None:
+                self._order_badge.hide()
 
     def is_selected(self) -> bool:
         return self._selected
