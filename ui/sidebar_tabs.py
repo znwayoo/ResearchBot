@@ -694,8 +694,17 @@ class PlatformBrowser(QWebEngineView):
                     nativeInputValueSetter.call(input, text);
                     input.dispatchEvent(new Event('input', {{ bubbles: true }}));
                 }} else {{
-                    // For contenteditable div (newer ChatGPT UI)
-                    input.textContent = text;
+                    // Convert newlines to <p> elements to preserve formatting
+                    const lines = text.split('\\n');
+                    const html = lines.map(line => {{
+                        const escaped = line
+                            .replace(/&/g, '&amp;')
+                            .replace(/</g, '&lt;')
+                            .replace(/>/g, '&gt;');
+                        return '<p>' + (escaped || '<br>') + '</p>';
+                    }}).join('');
+                    input.innerHTML = html;
+
                     input.dispatchEvent(new InputEvent('input', {{
                         bubbles: true,
                         cancelable: true,
@@ -1274,7 +1283,17 @@ class PlatformBrowser(QWebEngineView):
                     nativeInputValueSetter.call(input, text);
                     input.dispatchEvent(new Event('input', {{ bubbles: true }}));
                 }} else {{
-                    input.textContent = text;
+                    // Convert newlines to <p> elements to preserve formatting
+                    const lines = text.split('\\n');
+                    const html = lines.map(line => {{
+                        const escaped = line
+                            .replace(/&/g, '&amp;')
+                            .replace(/</g, '&lt;')
+                            .replace(/>/g, '&gt;');
+                        return '<p>' + (escaped || '<br>') + '</p>';
+                    }}).join('');
+                    input.innerHTML = html;
+
                     input.dispatchEvent(new InputEvent('input', {{
                         bubbles: true,
                         cancelable: true,
