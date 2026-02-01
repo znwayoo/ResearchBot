@@ -9,6 +9,7 @@ from typing import List
 from PyQt6.QtCore import Qt, pyqtSignal, QEvent
 from PyQt6.QtGui import QTextCursor
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -115,6 +116,29 @@ class PromptManagementBox(QWidget):
         self.file_count_label = QLabel(f"Files (0/{MAX_FILES})")
         self.file_count_label.setStyleSheet(f"font-weight: bold; color: {DARK_THEME['text_primary']}; font-size: 12px;")
         file_header.addWidget(self.file_count_label)
+
+        self.no_reference_checkbox = QCheckBox("No Reference")
+        self.no_reference_checkbox.setStyleSheet(f"""
+            QCheckBox {{
+                color: {DARK_THEME['text_secondary']};
+                font-size: 11px;
+            }}
+            QCheckBox::indicator {{
+                width: 14px;
+                height: 14px;
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {DARK_THEME['accent']};
+                border: 1px solid {DARK_THEME['accent']};
+                border-radius: 3px;
+            }}
+            QCheckBox::indicator:unchecked {{
+                background-color: {DARK_THEME['surface']};
+                border: 1px solid {DARK_THEME['border']};
+                border-radius: 3px;
+            }}
+        """)
+        file_header.addWidget(self.no_reference_checkbox)
 
         file_header.addStretch()
 
@@ -507,6 +531,9 @@ class PromptManagementBox(QWidget):
         self.file_chips.clear()
         self._update_file_count()
         self.filesChanged.emit([])
+
+    def is_no_reference(self) -> bool:
+        return self.no_reference_checkbox.isChecked()
 
     def set_send_enabled(self, enabled: bool):
         self.send_btn.setEnabled(enabled)

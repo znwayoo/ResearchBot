@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Dict, Optional
 from urllib.parse import urlparse
 
-from PyQt6.QtCore import Qt, QSize, QUrl, pyqtSignal, QTimer, QEvent
+from PyQt6.QtCore import Qt, QSize, QUrl, pyqtSignal, QTimer, QEvent, QRectF
+from PyQt6.QtGui import QPainter, QPen, QColor
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineDownloadRequest, QWebEngineProfile, QWebEnginePage
 from PyQt6.QtWidgets import (
@@ -694,28 +695,21 @@ class PlatformBrowser(QWebEngineView):
                     input.dispatchEvent(new Event('input', {{ bubbles: true }}));
                 }} else {{
                     // For contenteditable div (newer ChatGPT UI)
-                    input.innerHTML = '';
-                    input.focus();
+                    input.textContent = text;
+                    input.dispatchEvent(new InputEvent('input', {{
+                        bubbles: true,
+                        cancelable: true,
+                        inputType: 'insertText',
+                        data: text
+                    }}));
 
-                    // Use execCommand for better compatibility
-                    document.execCommand('insertText', false, text);
-
-                    // If that didn't work, set innerHTML directly
-                    if (!input.textContent || input.textContent.length < 10) {{
-                        // Create paragraph element for proper formatting
-                        const p = document.createElement('p');
-                        p.textContent = text;
-                        input.innerHTML = '';
-                        input.appendChild(p);
-
-                        // Dispatch input event
-                        input.dispatchEvent(new InputEvent('input', {{
-                            bubbles: true,
-                            cancelable: true,
-                            inputType: 'insertText',
-                            data: text
-                        }}));
-                    }}
+                    // Move cursor to end
+                    const range = document.createRange();
+                    const sel = window.getSelection();
+                    range.selectNodeContents(input);
+                    range.collapse(false);
+                    sel.removeAllRanges();
+                    sel.addRange(range);
                 }}
 
                 window._chatgptInput = input;
@@ -1280,21 +1274,21 @@ class PlatformBrowser(QWebEngineView):
                     nativeInputValueSetter.call(input, text);
                     input.dispatchEvent(new Event('input', {{ bubbles: true }}));
                 }} else {{
-                    input.innerHTML = '';
-                    input.focus();
-                    document.execCommand('insertText', false, text);
-                    if (!input.textContent || input.textContent.length < 10) {{
-                        const p = document.createElement('p');
-                        p.textContent = text;
-                        input.innerHTML = '';
-                        input.appendChild(p);
-                        input.dispatchEvent(new InputEvent('input', {{
-                            bubbles: true,
-                            cancelable: true,
-                            inputType: 'insertText',
-                            data: text
-                        }}));
-                    }}
+                    input.textContent = text;
+                    input.dispatchEvent(new InputEvent('input', {{
+                        bubbles: true,
+                        cancelable: true,
+                        inputType: 'insertText',
+                        data: text
+                    }}));
+
+                    // Move cursor to end
+                    const range = document.createRange();
+                    const sel = window.getSelection();
+                    range.selectNodeContents(input);
+                    range.collapse(false);
+                    sel.removeAllRanges();
+                    sel.addRange(range);
                 }}
 
                 return 'filled';
@@ -1564,6 +1558,41 @@ class PlatformBrowser(QWebEngineView):
         self.execute_js(fill_script, callback)
 
 
+class SpinnerWidget(QWidget):
+    """Spinning arc widget used as a loading indicator."""
+
+    def __init__(self, size=18, color="#4CAF50", parent=None):
+        super().__init__(parent)
+        self.setFixedSize(size, size)
+        self._angle = 0
+        self._color = QColor(color)
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._rotate)
+
+    def start(self):
+        self.setVisible(True)
+        self._timer.start(50)
+
+    def stop(self):
+        self._timer.stop()
+        self.setVisible(False)
+
+    def _rotate(self):
+        self._angle = (self._angle + 30) % 360
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(self._color, 2)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        margin = 2
+        rect = QRectF(margin, margin, self.width() - 2 * margin, self.height() - 2 * margin)
+        painter.drawArc(rect, self._angle * 16, 270 * 16)
+        painter.end()
+
+
 class PlatformTab(QWidget):
     """Tab containing an embedded browser for a platform."""
 
@@ -1598,6 +1627,15 @@ class PlatformTab(QWidget):
         header_layout.addWidget(self.status_label)
 
         header_layout.addStretch()
+
+        # Loading spinner (left of Back button)
+        self.loading_spinner = SpinnerWidget(
+            size=18,
+            color=DARK_THEME['success'],
+            parent=self
+        )
+        self.loading_spinner.setVisible(False)
+        header_layout.addWidget(self.loading_spinner)
 
         # Back button
         back_btn = QPushButton("Back")
@@ -1674,6 +1712,8 @@ class PlatformTab(QWidget):
         self.browser = PlatformBrowser(self.platform)
         self.browser.pageLoaded.connect(self._on_page_loaded)
         self.browser.openInGoogleTab.connect(self.openInGoogleTab.emit)
+        self.browser.loadStarted.connect(lambda: self.loading_spinner.start())
+        self.browser.loadFinished.connect(lambda: self.loading_spinner.stop())
         if self.platform == "google":
             self.browser.urlChanged.connect(self._on_url_changed)
         layout.addWidget(self.browser, 1)
@@ -1843,6 +1883,7 @@ class PlatformTab(QWidget):
 
     def _on_page_loaded(self, platform: str):
         """Handle page load."""
+        self.loading_spinner.setVisible(False)
         self.status_label.setText("Ready")
         self.status_label.setStyleSheet("color: #4CAF50; font-weight: bold; font-size: 12px;")
 

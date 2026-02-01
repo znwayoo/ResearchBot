@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QMainWindow,
     QMessageBox,
+    QProgressBar,
     QSplitter,
     QStatusBar,
     QVBoxLayout,
@@ -486,6 +487,27 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Ready")
 
+        self.extraction_progress = QProgressBar()
+        self.extraction_progress.setMaximumWidth(200)
+        self.extraction_progress.setMaximumHeight(16)
+        self.extraction_progress.setTextVisible(True)
+        self.extraction_progress.setVisible(False)
+        self.extraction_progress.setStyleSheet(f"""
+            QProgressBar {{
+                border: 1px solid {DARK_THEME['border']};
+                border-radius: 4px;
+                background-color: {DARK_THEME['surface']};
+                text-align: center;
+                color: {DARK_THEME['text_secondary']};
+                font-size: 10px;
+            }}
+            QProgressBar::chunk {{
+                background-color: {DARK_THEME['success']};
+                border-radius: 3px;
+            }}
+        """)
+        self.status_bar.addWidget(self.extraction_progress)
+
         self.research_controller = ResearchController(self.browser_tabs, self)
         self.research_controller.statusUpdate.connect(self._on_status_update)
         self.research_controller.allQueriesComplete.connect(self._on_research_complete)
@@ -540,6 +562,20 @@ class MainWindow(QMainWindow):
         """Handle status updates from workspace."""
         self.status_bar.showMessage(message)
         self.browser_tabs.append_log(message, "INFO")
+
+        if message.startswith("Extracting file "):
+            try:
+                # Parse "Extracting file 1/3: paper.pdf..."
+                parts = message.split("Extracting file ")[1]
+                nums = parts.split(":")[0]
+                cur, total = nums.split("/")
+                self.extraction_progress.setMaximum(int(total))
+                self.extraction_progress.setValue(int(cur))
+                self.extraction_progress.setVisible(True)
+            except (ValueError, IndexError):
+                pass
+        elif "sent" in message.lower() or "error" in message.lower() or message == "Ready":
+            self.extraction_progress.setVisible(False)
 
     def _on_status_update(self, message: str):
         self.status_bar.showMessage(message)

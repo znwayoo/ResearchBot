@@ -6,6 +6,7 @@ from typing import List, Optional
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -30,6 +31,7 @@ from ui.items_panel import ItemsPanel
 from ui.prompt_box import PromptManagementBox
 from utils.local_storage import LocalStorage
 from utils.models import PromptItem, ResponseItem, SummaryItem
+from workers.file_extraction_worker import FileExtractionWorker
 
 
 class ResearchWorkspace(QWidget):
@@ -41,6 +43,8 @@ class ResearchWorkspace(QWidget):
         super().__init__(parent)
         self.storage = storage
         self.browser_tabs = browser_tabs
+        self._known_file_paths = set()
+        self._file_workers = []
 
         self._setup_ui()
         self._connect_signals()
@@ -215,6 +219,7 @@ class ResearchWorkspace(QWidget):
         self.prompt_box.summarizeRequested.connect(self._on_summarize)
         self.prompt_box.savePromptRequested.connect(self._on_save_prompt)
         self.prompt_box.deleteSelectedRequested.connect(self._on_delete_selected)
+        self.prompt_box.filesChanged.connect(self._on_files_changed)
 
     def _load_data(self):
         prompts = self.storage.get_all_prompts()
@@ -327,16 +332,15 @@ class ResearchWorkspace(QWidget):
             return
 
         combined_text = "\n\n---\n\n".join(combined_parts)
+        self._finish_send(combined_text)
 
-        files = self.prompt_box.get_files()
-
-        if files:
-            from agents.file_context_injector import FileContextInjector
-            try:
-                file_context = FileContextInjector.build_file_context(files)
-                combined_text = FileContextInjector.inject_into_query(combined_text, file_context)
-            except Exception as e:
-                self.statusUpdate.emit(f"Error processing files: {e}")
+    def _finish_send(self, combined_text):
+        """Complete the send after file extraction (or immediately if no files)."""
+        self.prompt_box.set_send_enabled(True)
+        browser = self.browser_tabs.get_active_browser()
+        if not browser:
+            self.statusUpdate.emit("No active browser tab")
+            return
 
         platform = self.browser_tabs.get_active_platform()
         self.statusUpdate.emit(f"Sending to {platform}...")
@@ -350,6 +354,73 @@ class ResearchWorkspace(QWidget):
                 self.statusUpdate.emit(f"Failed to send: {result}")
 
         browser.fill_input_only(combined_text, on_fill_complete)
+
+    def _on_files_changed(self, files):
+        """Auto-create prompt pills for newly uploaded files."""
+        current_paths = {f.path for f in files}
+        new_files = [f for f in files if f.path not in self._known_file_paths]
+        self._known_file_paths = current_paths
+
+        for file in new_files:
+            worker = FileExtractionWorker([file])
+            self._file_workers.append(worker)
+
+            def make_handler(f, w):
+                def on_complete(context):
+                    # Strip the header wrapper, get raw content
+                    lines = context.split("\n")
+                    content_lines = []
+                    for line in lines:
+                        if line.startswith("## UPLOADED FILE CONTEXT") or line.startswith("### File:"):
+                            continue
+                        content_lines.append(line)
+                    raw_content = "\n".join(content_lines).strip()
+
+                    # Strip references section if checkbox is checked
+                    if self.prompt_box.is_no_reference():
+                        raw_content = self._strip_references(raw_content)
+
+                    title = f.filename[:60]
+                    prompt_item = PromptItem(
+                        title=title,
+                        content=raw_content,
+                        category="Uncategorized",
+                        color="Purple",
+                        created_at=datetime.now(),
+                        updated_at=datetime.now(),
+                    )
+                    prompt_id = self.storage.save_prompt(prompt_item)
+                    prompt_item.id = prompt_id
+                    self.prompts_panel.add_item(prompt_item)
+                    self.statusUpdate.emit(f"Created prompt from {f.filename}")
+
+                    # Auto-remove the file chip
+                    self._known_file_paths.discard(f.path)
+                    self.prompt_box._remove_file(f.filename)
+
+                    if w in self._file_workers:
+                        self._file_workers.remove(w)
+                return on_complete
+            worker.extractionComplete.connect(make_handler(file, worker))
+            worker.extractionError.connect(
+                lambda err, fn=file.filename: self.statusUpdate.emit(
+                    f"Failed to extract {fn}: {err}"
+                )
+            )
+            worker.start()
+
+    def _strip_references(self, text: str) -> str:
+        """Strip bibliography/references section from extracted text."""
+        import re
+        lines = text.split("\n")
+        ref_pattern = re.compile(
+            r'^\s*#{0,3}\s*(References|Bibliography|Works Cited|REFERENCES|BIBLIOGRAPHY|WORKS CITED)\s*$',
+            re.IGNORECASE,
+        )
+        for i, line in enumerate(lines):
+            if ref_pattern.match(line):
+                return "\n".join(lines[:i]).rstrip()
+        return text
 
     def _on_grab(self):
         browser = self.browser_tabs.get_active_browser()
