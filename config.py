@@ -84,6 +84,7 @@ COLOR_PALETTE = {
 
 # Default prompt pills for first-time users
 DEFAULT_PROMPTS = [
+    # --- Exploration ---
     {
         "title": "Topic Search",
         "category": "Exploration",
@@ -122,9 +123,163 @@ DEFAULT_PROMPTS = [
         ),
     },
     {
+        "title": "SOTA Check",
+        "category": "Exploration",
+        "color": "Purple",
+        "content": (
+            "You are a competitive intelligence analyst for research. Provide a precise, "
+            "up-to-date snapshot of the state-of-the-art for [/TASK_PROBLEM].\n\n"
+            "Be concrete. Cite exact numbers, method names, and dates. "
+            "Do not use vague terms like 'recent advances' without specifics.\n\n"
+            "## 1. Leaderboard Snapshot\n"
+            "Create a ranked table of top methods with columns:\n"
+            "- Rank, Method Name, Key Paper (authors + year), Score on primary metric, "
+            "Score on secondary metric, Open-source (yes/no)\n"
+            "- Include at least the top 5 methods\n"
+            "- Note which benchmark and metric you are using\n\n"
+            "## 2. Benchmark Landscape\n"
+            "- Which benchmarks are considered standard and why?\n"
+            "- Are any benchmarks becoming saturated (near-perfect scores)?\n"
+            "- Are there newer, harder benchmarks gaining traction?\n\n"
+            "## 3. Recent Breakthroughs (last 12-24 months)\n"
+            "- What changed and when (specific paper, month/year)\n"
+            "- What technique or insight drove the improvement\n"
+            "- How large was the gain over the previous SOTA (absolute numbers)\n\n"
+            "## 4. Technique Breakdown\n"
+            "- What key techniques do top methods have in common?\n"
+            "- What differentiates the #1 method from the #2-5 methods?\n"
+            "- Are improvements coming from architecture, data, training, or all three?\n\n"
+            "## 5. Remaining Gaps\n"
+            "- What aspects of [/TASK_PROBLEM] are current methods still bad at?\n"
+            "- What is the theoretical upper bound or human-level performance?\n"
+            "- What would a breakthrough in this area look like?\n\n"
+            "## 6. Trajectory\n"
+            "- Is progress accelerating, plateauing, or decelerating?\n"
+            "- What emerging approaches could disrupt the current leaderboard?\n"
+            "- What should a researcher entering this area focus on?"
+        ),
+    },
+    {
+        "title": "Paper Extract: Step 1 - Core Intel",
+        "category": "Exploration",
+        "color": "Green",
+        "content": (
+            "You are a research extraction specialist. Perform a first-pass extraction of "
+            "the essential facts, claims, methodology, and results from [/PAPER_SOURCE]. "
+            "Pure extraction only - no judgment or critique at this stage.\n\n"
+            "## 1. Paper Identity\n"
+            "- Full title, authors, affiliations, venue, year\n"
+            "- Paper type (empirical, theoretical, survey, system, position)\n"
+            "- DOI or URL if available\n\n"
+            "## 2. Problem Statement\n"
+            "- What specific problem does the paper address?\n"
+            "- What gap or limitation in prior work motivates this?\n"
+            "- Quote the authors' own framing of the problem\n\n"
+            "## 3. Approach\n"
+            "- Describe the methodology step by step\n"
+            "- Key assumptions the method relies on\n"
+            "- What is novel vs. borrowed from prior work\n\n"
+            "## 4. Key Results\n"
+            "- List all quantitative results with exact numbers\n"
+            "- Primary metric and performance on it\n"
+            "- Secondary metrics and their values\n"
+            "- Statistical measures reported (p-values, confidence intervals, error bars)\n\n"
+            "## 5. Datasets and Baselines\n"
+            "- Every dataset used: name, size, source\n"
+            "- Every baseline compared against: name, source, reported performance\n"
+            "- Evaluation protocol (splits, cross-validation, held-out test)\n\n"
+            "## 6. Limitations (Author-Stated)\n"
+            "- What limitations do the authors themselves acknowledge?\n"
+            "- What future work do they suggest?\n\n"
+            "## 7. Key Figures and Tables\n"
+            "- For each important figure/table: number, what it shows, key takeaway\n\n"
+            "Output this as a clean, structured reference document that can feed "
+            "into deeper analysis in subsequent steps."
+        ),
+    },
+    {
+        "title": "Paper Extract: Step 2 - Cross-Ref",
+        "category": "Exploration",
+        "color": "Purple",
+        "content": (
+            "You are a research cross-referencing analyst. Take the extracted findings "
+            "from [/PAPER_SOURCE] and cross-reference them against the broader field of "
+            "[/FIELD].\n\n"
+            "Your goal is to validate claims, contextualize results, and map where this "
+            "work sits in the research landscape.\n\n"
+            "## 1. Claim Validation\n"
+            "- For each major claim in the paper, check:\n"
+            "  - Is this consistent with other published results?\n"
+            "  - Are there papers reporting contradictory findings? If so, which?\n"
+            "  - How do the reported numbers compare to established benchmarks?\n\n"
+            "## 2. Novelty Assessment\n"
+            "- What is genuinely novel in this work?\n"
+            "- What is incremental improvement over existing methods?\n"
+            "- What has been done before under a different name or framing?\n"
+            "- Cite the closest prior work for each claimed contribution\n\n"
+            "## 3. Research Timeline Positioning\n"
+            "- Where does this paper sit in the evolution of the field?\n"
+            "- What were the key precursor papers that enabled this work?\n"
+            "- What subsequent work has built on or cited this paper?\n"
+            "- Is this on the main trajectory of the field or a side branch?\n\n"
+            "## 4. Methodological Context\n"
+            "- How does the methodology compare to current best practices?\n"
+            "- Are the baselines they chose still relevant, or are there stronger ones?\n"
+            "- Are the datasets they used considered adequate by current standards?\n\n"
+            "## 5. Conflicting Evidence\n"
+            "- List specific papers or results that challenge this work's conclusions\n"
+            "- For each conflict: what differs (data, method, assumptions) and why it matters\n"
+            "- Is there a resolution, or is this an open disagreement?\n\n"
+            "## 6. Field Consensus Map\n"
+            "- What aspects of this paper align with field consensus?\n"
+            "- What aspects go against prevailing views?\n"
+            "- What aspects address questions the field has not settled yet?"
+        ),
+    },
+    {
+        "title": "Paper Extract: Step 3 - Value Map",
+        "category": "Exploration",
+        "color": "Orange",
+        "content": (
+            "You are a research strategist. Synthesize the extraction and cross-referencing "
+            "of [/PAPER_SOURCE] into actionable research value in the context of "
+            "[/RESEARCH_GOAL].\n\n"
+            "Transform analysis into strategy. What should the researcher do with this paper?\n\n"
+            "## 1. Key Takeaways for Your Research\n"
+            "- Top 3-5 ideas from this paper directly relevant to [/RESEARCH_GOAL]\n"
+            "- For each: what it is, why it matters for your work, how to apply it\n\n"
+            "## 2. Ideas to Adopt\n"
+            "- Techniques, methods, or frameworks worth incorporating\n"
+            "- For each: what to adopt, how to adapt it to your context, expected benefit\n"
+            "- Implementation complexity (low / medium / high) for each\n\n"
+            "## 3. Ideas to Challenge\n"
+            "- Claims or assumptions in this paper that warrant skepticism\n"
+            "- For each: what to challenge, why, and what alternative to test\n"
+            "- Could challenging these lead to a publishable contribution?\n\n"
+            "## 4. Experiments to Run Next\n"
+            "- Concrete experiments inspired by this paper\n"
+            "- For each: hypothesis, method, expected outcome, required resources\n"
+            "- Priority ranking based on potential impact and feasibility\n\n"
+            "## 5. Building on This Work\n"
+            "- Gaps this paper leaves open that you could fill\n"
+            "- Extensions that would strengthen or generalize the findings\n"
+            "- Combinations with other work that could yield novel contributions\n\n"
+            "## 6. Citation and Positioning Strategy\n"
+            "- How to cite this paper in your own work (what context)\n"
+            "- How your research would relate to, extend, or differ from this paper\n"
+            "- Key phrases or framings from this paper useful for your writing\n\n"
+            "## 7. Action Items\n"
+            "- Prioritized list of concrete next steps based on this paper\n"
+            "- Quick wins (can do immediately)\n"
+            "- Medium-term actions (require some setup)\n"
+            "- Long-term opportunities (require significant effort)"
+        ),
+    },
+    # --- Literature ---
+    {
         "title": "Paper Analysis",
         "category": "Literature",
-        "color": "Blue",
+        "color": "Orange",
         "content": (
             "You are an expert peer reviewer. Perform a thorough, structured analysis of "
             "the following paper: [/PAPER_TITLE].\n\n"
@@ -167,7 +322,7 @@ DEFAULT_PROMPTS = [
     {
         "title": "Literature Survey",
         "category": "Literature",
-        "color": "Blue",
+        "color": "Red",
         "content": (
             "You are a systematic review specialist. Produce a structured literature "
             "survey on [/TOPIC] that maps the research landscape and identifies patterns "
@@ -204,10 +359,57 @@ DEFAULT_PROMPTS = [
             "Title, Authors, Year, Cluster, Key Contribution."
         ),
     },
+    # --- Methodology ---
+    {
+        "title": "Research Design",
+        "category": "Methodology",
+        "color": "Purple",
+        "content": (
+            "You are an expert research methodologist. Design a rigorous methodology "
+            "for investigating [/RESEARCH_QUESTION] in the domain of [/DOMAIN].\n\n"
+            "The design should be detailed enough for a competent researcher to execute "
+            "without ambiguity.\n\n"
+            "## 1. Research Framework\n"
+            "- Research paradigm (quantitative, qualitative, mixed methods) and justification\n"
+            "- Theoretical framework or model underpinning the study\n"
+            "- Key constructs and how they will be operationalized\n\n"
+            "## 2. Hypotheses / Research Questions\n"
+            "- Primary hypothesis or question (formal statement)\n"
+            "- Secondary hypotheses or sub-questions\n"
+            "- Null hypotheses where applicable\n\n"
+            "## 3. Study Design\n"
+            "- Design type (experimental, quasi-experimental, observational, etc.)\n"
+            "- Independent, dependent, and control variables\n"
+            "- Confounding variables and how they will be handled\n"
+            "- Comparison groups or conditions\n\n"
+            "## 4. Sampling Strategy\n"
+            "- Target population and sampling frame\n"
+            "- Sampling method and justification\n"
+            "- Sample size calculation with assumptions\n"
+            "- Inclusion and exclusion criteria\n\n"
+            "## 5. Data Collection\n"
+            "- Instruments, tools, or procedures for data collection\n"
+            "- Data types and formats\n"
+            "- Timeline and sequencing of data collection\n"
+            "- Quality assurance measures during collection\n\n"
+            "## 6. Analysis Plan\n"
+            "- Statistical tests or analytical methods for each hypothesis\n"
+            "- Assumptions to check before analysis\n"
+            "- How to handle missing data, outliers, and violations\n"
+            "- Software and tools to use\n\n"
+            "## 7. Validity and Limitations\n"
+            "- Threats to internal, external, and construct validity\n"
+            "- Mitigation strategies for each threat\n"
+            "- Known limitations and their impact on conclusions\n\n"
+            "## 8. Ethical Considerations\n"
+            "- IRB or ethics review requirements\n"
+            "- Informed consent, privacy, and data handling protocols"
+        ),
+    },
     {
         "title": "Compare Approaches",
         "category": "Methodology",
-        "color": "Purple",
+        "color": "Orange",
         "content": (
             "You are a methods expert tasked with producing a rigorous, decision-ready "
             "comparison. Compare the following approaches to [/PROBLEM]:\n"
@@ -245,9 +447,99 @@ DEFAULT_PROMPTS = [
         ),
     },
     {
-        "title": "Dataset Search",
+        "title": "Experiment Design",
+        "category": "Methodology",
+        "color": "Purple",
+        "content": (
+            "You are an experimental design specialist. Design a rigorous experiment "
+            "to test the hypothesis: [/HYPOTHESIS].\n\n"
+            "The experiment should be reproducible, well-controlled, and produce "
+            "conclusive results.\n\n"
+            "## 1. Hypothesis Formalization\n"
+            "- Restate [/HYPOTHESIS] as a testable, falsifiable statement\n"
+            "- Null hypothesis (H0) and alternative hypothesis (H1)\n"
+            "- What specific outcome would confirm vs. refute the hypothesis?\n\n"
+            "## 2. Experimental Setup\n"
+            "- Independent variable(s) and their levels/conditions\n"
+            "- Dependent variable(s) and how they will be measured\n"
+            "- Control variables and how they will be held constant\n"
+            "- Control group or baseline condition\n\n"
+            "## 3. Protocol\n"
+            "- Step-by-step procedure for running the experiment\n"
+            "- Randomization and blinding procedures if applicable\n"
+            "- Number of trials, repetitions, or epochs\n"
+            "- Data recording format and frequency\n\n"
+            "## 4. Resources Required\n"
+            "- Hardware, software, and compute requirements\n"
+            "- Datasets or data generation procedures\n"
+            "- Human participants (if applicable): recruitment, sample size, compensation\n\n"
+            "## 5. Statistical Analysis Plan\n"
+            "- Primary statistical test and justification\n"
+            "- Power analysis for sample size determination\n"
+            "- Significance threshold and multiple comparison corrections\n"
+            "- Effect size of interest and how to interpret results\n\n"
+            "## 6. Threats to Validity\n"
+            "- Potential confounds and how to mitigate each\n"
+            "- Selection bias, measurement bias, survivorship bias risks\n"
+            "- What could make the results misleading even if statistically significant?\n\n"
+            "## 7. Expected Outcomes\n"
+            "- What results would you expect if H1 is true?\n"
+            "- What results would you expect if H0 is true?\n"
+            "- What ambiguous outcomes are possible and how to resolve them?\n\n"
+            "## 8. Timeline and Milestones\n"
+            "- Pilot study plan\n"
+            "- Full experiment phases\n"
+            "- Go/no-go decision points"
+        ),
+    },
+    # --- Data & Metrics ---
+    {
+        "title": "Data Audit",
         "category": "Data & Metrics",
         "color": "Green",
+        "content": (
+            "You are a data quality specialist. Perform a comprehensive audit of the "
+            "dataset or data pipeline for [/PROJECT].\n\n"
+            "Be practical and checklist-driven. Flag issues with severity levels and "
+            "provide actionable fixes.\n\n"
+            "## 1. Data Overview\n"
+            "- Dataset dimensions (rows, columns, size on disk)\n"
+            "- Data types and schema summary\n"
+            "- Source(s) and collection methodology\n"
+            "- Date range and freshness\n\n"
+            "## 2. Completeness Audit\n"
+            "- Missing value analysis per column (percentage and pattern)\n"
+            "- Are missing values random (MCAR), systematic (MAR), or informative (MNAR)?\n"
+            "- Recommended handling strategy for each pattern\n\n"
+            "## 3. Consistency Checks\n"
+            "- Duplicate records (exact and fuzzy)\n"
+            "- Format inconsistencies (dates, strings, encodings)\n"
+            "- Referential integrity across related tables\n"
+            "- Unit consistency (currencies, measurements, time zones)\n\n"
+            "## 4. Distribution Analysis\n"
+            "- Outlier detection for numeric columns\n"
+            "- Class balance for categorical targets\n"
+            "- Unexpected values or categories\n"
+            "- Temporal patterns (seasonality, trends, drift)\n\n"
+            "## 5. Data Leakage Check\n"
+            "- Features that could leak target information\n"
+            "- Temporal leakage in train/test splits\n"
+            "- Proxy variables that encode protected attributes\n\n"
+            "## 6. Pipeline Health\n"
+            "- Data freshness and update reliability\n"
+            "- Schema evolution and breaking change risks\n"
+            "- Error handling and recovery mechanisms\n"
+            "- Monitoring and alerting coverage\n\n"
+            "## 7. Issue Summary\n"
+            "- Prioritized table: Issue, Severity (critical/high/medium/low), Impact, Fix\n"
+            "- Quick wins vs. structural problems\n"
+            "- Estimated data quality score (0-100)"
+        ),
+    },
+    {
+        "title": "Dataset Search",
+        "category": "Data & Metrics",
+        "color": "Blue",
         "content": (
             "You are a data sourcing specialist. Find and evaluate the best available "
             "datasets and benchmarks for research in [/RESEARCH_AREA], specifically for "
@@ -282,6 +574,144 @@ DEFAULT_PROMPTS = [
             "and whether synthetic augmentation could fill gaps"
         ),
     },
+    {
+        "title": "KPI Framework",
+        "category": "Data & Metrics",
+        "color": "Purple",
+        "content": (
+            "You are a metrics and measurement strategist. Build a comprehensive KPI "
+            "framework for [/BUSINESS_OBJECTIVE].\n\n"
+            "Metrics should be actionable, measurable, and tied to outcomes, not vanity.\n\n"
+            "## 1. Objective Decomposition\n"
+            "- Break [/BUSINESS_OBJECTIVE] into 3-5 measurable sub-objectives\n"
+            "- For each: what success looks like, what failure looks like\n"
+            "- Causal chain: how sub-objectives drive the overall objective\n\n"
+            "## 2. KPI Hierarchy\n"
+            "For each sub-objective, define:\n"
+            "- Primary KPI: the single most important metric\n"
+            "- Supporting KPIs: 2-3 metrics that provide context and early signals\n"
+            "- For each KPI: definition, formula, data source, update frequency\n\n"
+            "## 3. Targets and Thresholds\n"
+            "- Baseline: current performance level\n"
+            "- Target: desired performance level with timeframe\n"
+            "- Threshold: minimum acceptable level (red/yellow/green zones)\n"
+            "- Stretch goal: aspirational but achievable\n\n"
+            "## 4. Leading vs. Lagging Indicators\n"
+            "- Identify which KPIs are leading (predictive) vs. lagging (outcome)\n"
+            "- For leading indicators: what action to take when they move\n"
+            "- For lagging indicators: what leading indicators predict them\n\n"
+            "## 5. Counter-Metrics\n"
+            "- For each primary KPI, define a counter-metric that prevents gaming\n"
+            "- Example: if KPI is speed, counter-metric is quality\n"
+            "- How to detect and prevent Goodhart's Law effects\n\n"
+            "## 6. Dashboard Design\n"
+            "- Recommended visualization for each KPI\n"
+            "- Grouping and hierarchy for executive vs. operational views\n"
+            "- Alert conditions and escalation triggers\n\n"
+            "## 7. Review Cadence\n"
+            "- Which metrics to review daily, weekly, monthly, quarterly\n"
+            "- Decision rules: what metric movements trigger what actions"
+        ),
+    },
+    # --- Architecture ---
+    {
+        "title": "System Design",
+        "category": "Architecture",
+        "color": "Orange",
+        "content": (
+            "You are a senior systems architect. Design the technical architecture "
+            "for [/SYSTEM].\n\n"
+            "The design should balance practical constraints with scalability. "
+            "Justify every major decision.\n\n"
+            "## 1. Requirements Analysis\n"
+            "- Functional requirements (what the system must do)\n"
+            "- Non-functional requirements (performance, reliability, security, cost)\n"
+            "- Constraints (team size, timeline, existing infrastructure, budget)\n"
+            "- Scale targets (users, requests/sec, data volume, growth rate)\n\n"
+            "## 2. High-Level Architecture\n"
+            "- System components and their responsibilities\n"
+            "- Data flow between components\n"
+            "- External dependencies and integrations\n"
+            "- Deployment topology (cloud, on-prem, hybrid)\n\n"
+            "## 3. Component Deep-Dive\n"
+            "For each major component:\n"
+            "- Technology choice and justification (why this over alternatives)\n"
+            "- Internal architecture and key abstractions\n"
+            "- API contract (inputs, outputs, error handling)\n"
+            "- Scaling strategy (horizontal, vertical, auto-scaling triggers)\n\n"
+            "## 4. Data Architecture\n"
+            "- Data models and storage choices\n"
+            "- Read/write patterns and optimization strategies\n"
+            "- Caching layers and invalidation policies\n"
+            "- Data consistency model (strong, eventual, causal)\n\n"
+            "## 5. Reliability and Operations\n"
+            "- Failure modes and recovery strategies\n"
+            "- Monitoring, alerting, and observability plan\n"
+            "- Backup and disaster recovery\n"
+            "- SLA targets and error budgets\n\n"
+            "## 6. Security Architecture\n"
+            "- Authentication and authorization model\n"
+            "- Data encryption (at rest, in transit)\n"
+            "- Network security and access controls\n"
+            "- Compliance requirements\n\n"
+            "## 7. Trade-offs and Alternatives\n"
+            "- Key decisions made and what was traded away\n"
+            "- Under what conditions you would redesign\n"
+            "- Migration path from current state to proposed architecture"
+        ),
+    },
+    {
+        "title": "ML Pipeline Design",
+        "category": "Architecture",
+        "color": "Red",
+        "content": (
+            "You are an ML systems architect. Design an end-to-end ML pipeline "
+            "for [/ML_TASK].\n\n"
+            "Cover the full lifecycle from data ingestion to production monitoring. "
+            "This should be production-grade, not a notebook prototype.\n\n"
+            "## 1. Problem Framing\n"
+            "- ML task type (classification, regression, ranking, generation, etc.)\n"
+            "- Input/output specification with concrete examples\n"
+            "- Success criteria: what metric at what threshold means production-ready\n"
+            "- Baseline: simplest possible approach and its expected performance\n\n"
+            "## 2. Data Pipeline\n"
+            "- Data sources and ingestion strategy\n"
+            "- Feature engineering pipeline (transformations, aggregations, embeddings)\n"
+            "- Feature store architecture if applicable\n"
+            "- Data validation and schema enforcement\n"
+            "- Handling data drift and distribution shift\n\n"
+            "## 3. Model Architecture\n"
+            "- Recommended model family and justification\n"
+            "- Architecture details (layers, hyperparameters, training strategy)\n"
+            "- Alternative architectures considered and why rejected\n"
+            "- Transfer learning or pre-training strategy if applicable\n\n"
+            "## 4. Training Infrastructure\n"
+            "- Compute requirements (GPU type, memory, training time estimate)\n"
+            "- Distributed training strategy if needed\n"
+            "- Experiment tracking and versioning\n"
+            "- Hyperparameter optimization approach\n\n"
+            "## 5. Evaluation Framework\n"
+            "- Offline evaluation: metrics, test sets, slice-based analysis\n"
+            "- Online evaluation: A/B testing, shadow mode, canary deployment\n"
+            "- Fairness and bias evaluation\n"
+            "- Error analysis methodology\n\n"
+            "## 6. Serving Architecture\n"
+            "- Inference mode (batch, real-time, streaming)\n"
+            "- Model serving infrastructure (containers, serverless, dedicated)\n"
+            "- Latency and throughput requirements\n"
+            "- Model compression or optimization for serving\n\n"
+            "## 7. Monitoring and Maintenance\n"
+            "- Model performance monitoring (accuracy degradation, drift detection)\n"
+            "- Data quality monitoring in production\n"
+            "- Retraining triggers and cadence\n"
+            "- Rollback strategy and model versioning\n\n"
+            "## 8. Cost Analysis\n"
+            "- Training cost estimate\n"
+            "- Serving cost estimate at target scale\n"
+            "- Cost optimization opportunities"
+        ),
+    },
+    # --- Implementation ---
     {
         "title": "Implementation Guide",
         "category": "Implementation",
@@ -327,9 +757,55 @@ DEFAULT_PROMPTS = [
         ),
     },
     {
+        "title": "Production Review",
+        "category": "Implementation",
+        "color": "Orange",
+        "content": (
+            "You are a senior production engineer. Review [/COMPONENT] for production "
+            "readiness and identify risks before deployment.\n\n"
+            "Be thorough but practical. Prioritize issues by blast radius.\n\n"
+            "## 1. Functionality Review\n"
+            "- Does the component do what it claims to do?\n"
+            "- Edge cases: what inputs or conditions could cause unexpected behavior?\n"
+            "- Error handling: are all failure modes handled gracefully?\n"
+            "- Input validation: is all external input sanitized and validated?\n\n"
+            "## 2. Performance Assessment\n"
+            "- Expected throughput and latency under normal load\n"
+            "- Behavior under peak load (2x, 5x, 10x normal)\n"
+            "- Resource consumption (CPU, memory, disk, network)\n"
+            "- Bottlenecks and optimization opportunities\n\n"
+            "## 3. Reliability Check\n"
+            "- Single points of failure\n"
+            "- Dependency health: what happens when each dependency fails?\n"
+            "- Timeout and retry configurations\n"
+            "- Circuit breaker and fallback mechanisms\n"
+            "- Graceful degradation strategy\n\n"
+            "## 4. Security Review\n"
+            "- Authentication and authorization coverage\n"
+            "- Data handling: encryption, PII, compliance\n"
+            "- Common vulnerability check (injection, XSS, CSRF, etc.)\n"
+            "- Dependency vulnerabilities (outdated packages)\n\n"
+            "## 5. Observability\n"
+            "- Logging: are important events logged with context?\n"
+            "- Metrics: are key performance indicators instrumented?\n"
+            "- Tracing: can you follow a request through the system?\n"
+            "- Alerting: will you know when something breaks?\n\n"
+            "## 6. Deployment Readiness\n"
+            "- Configuration management (no hardcoded secrets or environments)\n"
+            "- Database migrations and backward compatibility\n"
+            "- Rollback plan and procedure\n"
+            "- Documentation for on-call engineers\n\n"
+            "## 7. Verdict\n"
+            "- Go / No-Go recommendation with justification\n"
+            "- Blockers that must be fixed before deployment\n"
+            "- Risks accepted with mitigation plans"
+        ),
+    },
+    # --- Analysis ---
+    {
         "title": "Critical Review",
         "category": "Analysis",
-        "color": "Orange",
+        "color": "Red",
         "content": (
             "You are a rigorous academic reviewer and critical thinker. Evaluate the "
             "following claim, paper, or method: [/CLAIM_PAPER_METHOD].\n\n"
@@ -368,46 +844,50 @@ DEFAULT_PROMPTS = [
         ),
     },
     {
-        "title": "SOTA Check",
-        "category": "Exploration",
-        "color": "Blue",
+        "title": "Business Case Analysis",
+        "category": "Analysis",
+        "color": "Orange",
         "content": (
-            "You are a competitive intelligence analyst for research. Provide a precise, "
-            "up-to-date snapshot of the state-of-the-art for [/TASK_PROBLEM].\n\n"
-            "Be concrete. Cite exact numbers, method names, and dates. "
-            "Do not use vague terms like 'recent advances' without specifics.\n\n"
-            "## 1. Leaderboard Snapshot\n"
-            "Create a ranked table of top methods with columns:\n"
-            "- Rank, Method Name, Key Paper (authors + year), Score on primary metric, "
-            "Score on secondary metric, Open-source (yes/no)\n"
-            "- Include at least the top 5 methods\n"
-            "- Note which benchmark and metric you are using\n\n"
-            "## 2. Benchmark Landscape\n"
-            "- Which benchmarks are considered standard and why?\n"
-            "- Are any benchmarks becoming saturated (near-perfect scores)?\n"
-            "- Are there newer, harder benchmarks gaining traction?\n\n"
-            "## 3. Recent Breakthroughs (last 12-24 months)\n"
-            "- What changed and when (specific paper, month/year)\n"
-            "- What technique or insight drove the improvement\n"
-            "- How large was the gain over the previous SOTA (absolute numbers)\n\n"
-            "## 4. Technique Breakdown\n"
-            "- What key techniques do top methods have in common?\n"
-            "- What differentiates the #1 method from the #2-5 methods?\n"
-            "- Are improvements coming from architecture, data, training, or all three?\n\n"
-            "## 5. Remaining Gaps\n"
-            "- What aspects of [/TASK_PROBLEM] are current methods still bad at?\n"
-            "- What is the theoretical upper bound or human-level performance?\n"
-            "- What would a breakthrough in this area look like?\n\n"
-            "## 6. Trajectory\n"
-            "- Is progress accelerating, plateauing, or decelerating?\n"
-            "- What emerging approaches could disrupt the current leaderboard?\n"
-            "- What should a researcher entering this area focus on?"
+            "You are a strategic analyst. Analyze the business case for [/INITIATIVE] "
+            "with rigorous, data-driven reasoning.\n\n"
+            "Balance optimism with realism. Quantify where possible, qualify where not.\n\n"
+            "## 1. Initiative Summary\n"
+            "- What is [/INITIATIVE] and what problem does it solve?\n"
+            "- Who benefits and how?\n"
+            "- Current state vs. proposed state\n\n"
+            "## 2. Market and Opportunity Analysis\n"
+            "- Total addressable market (TAM) and serviceable market (SAM)\n"
+            "- Market trends supporting or opposing this initiative\n"
+            "- Competitive landscape: who else is doing this and how?\n\n"
+            "## 3. Value Proposition\n"
+            "- Quantified benefits (revenue, cost savings, efficiency gains)\n"
+            "- Qualitative benefits (brand, morale, strategic positioning)\n"
+            "- Time to value: when do benefits start materializing?\n\n"
+            "## 4. Cost Analysis\n"
+            "- Upfront costs (development, infrastructure, hiring)\n"
+            "- Ongoing costs (operations, maintenance, support)\n"
+            "- Hidden costs (opportunity cost, technical debt, organizational disruption)\n\n"
+            "## 5. Risk Assessment\n"
+            "- Technical risks: what could go wrong in execution?\n"
+            "- Market risks: what if assumptions about demand are wrong?\n"
+            "- Organizational risks: do we have the capability to execute?\n"
+            "- For each risk: probability, impact, mitigation strategy\n\n"
+            "## 6. Financial Model\n"
+            "- ROI calculation with assumptions stated\n"
+            "- Break-even timeline\n"
+            "- Sensitivity analysis: which assumptions matter most?\n"
+            "- Best case, expected case, worst case scenarios\n\n"
+            "## 7. Recommendation\n"
+            "- Go / No-Go / Conditional-Go with clear justification\n"
+            "- Key conditions or milestones for proceeding\n"
+            "- What would change your recommendation?"
         ),
     },
+    # --- Draft ---
     {
         "title": "Draft Outline",
         "category": "Draft",
-        "color": "Orange",
+        "color": "Purple",
         "content": (
             "You are an experienced academic writer and research communicator. "
             "Create a publication-ready outline for a research document on [/TOPIC].\n\n"
@@ -448,6 +928,45 @@ DEFAULT_PROMPTS = [
         ),
     },
     {
+        "title": "Executive Brief",
+        "category": "Draft",
+        "color": "Green",
+        "content": (
+            "You are an executive communications specialist. Write a concise, "
+            "high-impact briefing on [/TOPIC] for [/AUDIENCE].\n\n"
+            "Executives have limited time. Every sentence must earn its place. "
+            "Lead with conclusions, support with evidence, end with actions.\n\n"
+            "## 1. Bottom Line Up Front (BLUF)\n"
+            "- One paragraph: what is happening, why it matters, what to do about it\n"
+            "- The single most important takeaway\n\n"
+            "## 2. Context\n"
+            "- Background the reader needs (and nothing more)\n"
+            "- How this connects to current priorities or strategy\n"
+            "- What triggered this briefing (event, data, request)\n\n"
+            "## 3. Key Findings\n"
+            "- 3-5 findings, each as a bold assertion followed by supporting evidence\n"
+            "- Use specific numbers and comparisons, not vague qualifiers\n"
+            "- Distinguish between facts, estimates, and opinions\n\n"
+            "## 4. Implications\n"
+            "- What these findings mean for [/AUDIENCE] specifically\n"
+            "- Opportunities to capture\n"
+            "- Risks to mitigate\n"
+            "- What happens if no action is taken\n\n"
+            "## 5. Options and Recommendation\n"
+            "- 2-3 options with pros, cons, and resource requirements\n"
+            "- Clear recommendation with justification\n"
+            "- Quick win available immediately\n\n"
+            "## 6. Next Steps\n"
+            "- 3-5 concrete action items\n"
+            "- For each: who, what, by when\n"
+            "- Decision needed from the reader (if any)\n\n"
+            "Formatting: Keep total length under 2 pages equivalent. "
+            "Use bullet points, bold key phrases, and white space liberally. "
+            "No jargon unless the audience expects it."
+        ),
+    },
+    # --- Reference ---
+    {
         "title": "Explain Concept",
         "category": "Reference",
         "color": "Gray",
@@ -484,6 +1003,42 @@ DEFAULT_PROMPTS = [
             "## 8. Test Your Understanding\n"
             "- Pose 3 questions of increasing difficulty that test genuine comprehension\n"
             "- Provide answers with explanations"
+        ),
+    },
+    {
+        "title": "Glossary Builder",
+        "category": "Reference",
+        "color": "Blue",
+        "content": (
+            "You are a technical lexicographer. Build a comprehensive glossary for "
+            "the domain of [/DOMAIN].\n\n"
+            "Each entry should be useful for both newcomers and practitioners who "
+            "need precise definitions.\n\n"
+            "## 1. Core Terms (15-25 entries)\n"
+            "For each term provide:\n"
+            "- **Term**: The canonical name\n"
+            "- **Definition**: 1-2 sentence precise definition\n"
+            "- **Plain English**: What it means in simple terms\n"
+            "- **Example**: A concrete example of the term in use\n"
+            "- **Related terms**: 2-3 terms that are commonly confused or associated\n"
+            "- **Common misuse**: How the term is frequently misapplied (if applicable)\n\n"
+            "## 2. Acronyms and Abbreviations\n"
+            "- Alphabetical list of common acronyms in [/DOMAIN]\n"
+            "- Full expansion and brief definition for each\n\n"
+            "## 3. Concept Relationships\n"
+            "- Group related terms into clusters\n"
+            "- Show hierarchies (is-a relationships)\n"
+            "- Show dependencies (requires understanding of)\n"
+            "- Note terms that are often confused with each other and how to distinguish them\n\n"
+            "## 4. Domain-Specific Usage Notes\n"
+            "- Terms that mean different things in different contexts\n"
+            "- Terms borrowed from other fields with shifted meaning\n"
+            "- Evolving terminology (old term vs. current preferred term)\n\n"
+            "## 5. Learning Order\n"
+            "- Suggested order for learning these terms (prerequisites first)\n"
+            "- Group into beginner, intermediate, and advanced tiers\n\n"
+            "Formatting: Alphabetize entries within each section. "
+            "Use consistent formatting throughout. Bold the defined term in each entry."
         ),
     },
 ]
