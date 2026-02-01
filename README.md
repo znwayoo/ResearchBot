@@ -11,14 +11,17 @@ ResearchBot embeds browser tabs for ChatGPT, Gemini, Perplexity, Claude, and Goo
 ### Multi-Platform Browsers
 - Embedded browser tabs for ChatGPT, Gemini, Perplexity, Claude, and Google
 - Persistent login sessions across restarts (cookies and storage preserved)
-- Send prompts directly into any platform's input field
+- Send prompts directly into any platform's input field with optimized JS injection per platform
 - Grab responses back into the workspace with one click
 - Duplicate detection prevents grabbing the same response twice
+- Green spinning arc loading indicator when pages are loading
+- Back, Refresh, Home, and Clear Data controls per browser tab
 
 ### Research Workspace
-- **Prompts** - Save, reuse, and combine reusable prompt templates
+- **Prompts** - Save, reuse, and combine reusable prompt templates with placeholder variables (`[/NAME]` syntax with slash-completion popup)
 - **Responses** - Store grabbed AI responses with platform attribution
 - **Summaries** - Generate cross-platform summaries from multiple responses
+- **Notebook** - Built-in Markdown editor (see below)
 
 ### Content Organization
 - Color-coded pill UI in a responsive two-column grid
@@ -27,11 +30,16 @@ ResearchBot embeds browser tabs for ChatGPT, Gemini, Perplexity, Claude, and Goo
 - Drag and drop reordering with smooth animations and persistent ordering
 - Category and color filters with live item counts
 - Multi-select with bulk delete, export, and move operations
+- Persistent selections across sends so you can reuse the same prompts on multiple platforms
+- Clear Selection button to deselect all items when done
 - Move items between Prompts, Responses, and Summaries tabs
+- Copy pill content to clipboard
 
-### File Upload
+### File Upload and Prompt Pills
 - Upload up to 5 files (50MB each) supporting 50+ formats (PDF, DOCX, TXT, MD, JSON, code files, and more)
-- Extracted text is injected into prompts automatically
+- Files are automatically extracted and converted into reusable prompt pills
+- File chips auto-remove after pill creation for a clean interface
+- "No Reference" toggle strips bibliography and references sections from extracted content
 - File chips in the prompt box with individual remove buttons
 
 ### Export
@@ -47,6 +55,10 @@ ResearchBot embeds browser tabs for ChatGPT, Gemini, Perplexity, Claude, and Goo
 ### Downloads Manager
 - Built-in download manager with progress bars and state tracking
 - Configurable download folder
+
+### Status Bar
+- Green progress bar beside status text during file extraction
+- Real-time status messages for all operations
 
 ### Logging
 - Color-coded log tab with timestamps (INFO, SUCCESS, WARNING, ERROR)
@@ -90,11 +102,12 @@ On first launch the app creates its data directory at `~/.researchbot/` containi
 
 1. Open a browser tab (ChatGPT, Gemini, Perplexity, or Claude) and log in. Sessions persist across restarts.
 2. Type or select saved prompts in the prompt box. Optionally attach files for context injection.
-3. Click **Send** to fill the prompt into the active platform's input.
+3. Click **Send** to fill the prompt into the active platform's input. Selections stay active so you can switch tabs and send the same prompts to other platforms.
 4. Click **Grab** to pull the response back into the Responses panel.
 5. Repeat across platforms, then select multiple responses and click **Summarize** to request a cross-platform synthesis.
-6. Organize with categories, colors, drag and drop, and filters.
-7. **Export** your research to PDF, Markdown, or text.
+6. Click **Clear Selection** when you are done reusing a set of prompts.
+7. Organize with categories, colors, drag and drop, and filters.
+8. **Export** your research to PDF, Markdown, or text.
 
 ## Project Structure
 
@@ -106,6 +119,7 @@ ResearchBot/
   agents/              # Task analyzer, file injector, response merger
   ui/                  # PyQt6 widgets (main window, panels, editors, browsers)
   utils/               # Storage, models, browser controller
+  workers/             # Background threads for file extraction
   instructions/        # Internal documentation
   tests/               # Test suite
 ```

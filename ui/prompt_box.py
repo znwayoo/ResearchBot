@@ -6,8 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import List
 
-from PyQt6.QtCore import Qt, pyqtSignal, QEvent
-from PyQt6.QtGui import QTextCursor
+from PyQt6.QtCore import Qt, pyqtSignal, QEvent, QRect
+from PyQt6.QtGui import QColor, QPainter, QPen, QTextCursor
 from PyQt6.QtWidgets import (
     QCheckBox,
     QFileDialog,
@@ -24,6 +24,49 @@ from PyQt6.QtWidgets import (
 
 from config import DARK_THEME, MAX_FILE_SIZE, MAX_FILES, SUPPORTED_FORMATS, UPLOAD_DIR
 from utils.models import UploadedFile
+
+
+class TickCheckBox(QCheckBox):
+    """Checkbox that draws a Nike-style tick when checked."""
+
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        self.setStyleSheet("QCheckBox::indicator { width: 0px; height: 0px; }")
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        box_size = 14
+        y_offset = (self.height() - box_size) // 2
+        box_rect = QRect(0, y_offset, box_size, box_size)
+
+        # Draw box border
+        border_color = QColor(DARK_THEME['accent'] if self.isChecked() else DARK_THEME['border'])
+        painter.setPen(QPen(border_color, 1))
+        bg = QColor(DARK_THEME['surface'])
+        painter.setBrush(bg)
+        painter.drawRoundedRect(box_rect, 3, 3)
+
+        # Draw tick when checked
+        if self.isChecked():
+            pen = QPen(QColor(DARK_THEME['success']), 2)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            # Nike-style checkmark path
+            x, y = box_rect.x(), box_rect.y()
+            from PyQt6.QtCore import QPointF
+            from PyQt6.QtGui import QPainterPath
+            path = QPainterPath()
+            path.moveTo(x + 3, y + box_size * 0.5)
+            path.lineTo(x + box_size * 0.4, y + box_size - 3)
+            path.lineTo(x + box_size - 2, y + 3)
+            painter.drawPath(path)
+
+        painter.end()
 
 
 class FileChip(QFrame):
@@ -117,25 +160,12 @@ class PromptManagementBox(QWidget):
         self.file_count_label.setStyleSheet(f"font-weight: bold; color: {DARK_THEME['text_primary']}; font-size: 12px;")
         file_header.addWidget(self.file_count_label)
 
-        self.no_reference_checkbox = QCheckBox("No Reference")
+        self.no_reference_checkbox = TickCheckBox("No Reference")
         self.no_reference_checkbox.setStyleSheet(f"""
             QCheckBox {{
                 color: {DARK_THEME['text_secondary']};
                 font-size: 11px;
-            }}
-            QCheckBox::indicator {{
-                width: 14px;
-                height: 14px;
-            }}
-            QCheckBox::indicator:checked {{
-                background-color: {DARK_THEME['accent']};
-                border: 1px solid {DARK_THEME['accent']};
-                border-radius: 3px;
-            }}
-            QCheckBox::indicator:unchecked {{
-                background-color: {DARK_THEME['surface']};
-                border: 1px solid {DARK_THEME['border']};
-                border-radius: 3px;
+                spacing: 5px;
             }}
         """)
         file_header.addWidget(self.no_reference_checkbox)
@@ -168,7 +198,7 @@ class PromptManagementBox(QWidget):
         file_layout.addWidget(self.chips_container)
 
         # Mode info label (inject content only)
-        mode_info = QLabel("File content will be injected into the prompt")
+        mode_info = QLabel("Uploaded files will be converted into prompt pills")
         mode_info.setStyleSheet(f"font-size: 10px; color: {DARK_THEME['text_secondary']}; font-style: italic;")
         file_layout.addWidget(mode_info)
 

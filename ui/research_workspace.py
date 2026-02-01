@@ -149,6 +149,29 @@ class ResearchWorkspace(QWidget):
         self.move_btn.clicked.connect(self._on_action_move)
         action_layout.addWidget(self.move_btn)
 
+        self.clear_sel_btn = QPushButton("Clear Selection")
+        self.clear_sel_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DARK_THEME['surface']};
+                color: {DARK_THEME['text_primary']};
+                border: 1px solid {DARK_THEME['border']};
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                background-color: {DARK_THEME['surface_light']};
+            }}
+            QPushButton:disabled {{
+                color: {DARK_THEME['text_secondary']};
+                background-color: {DARK_THEME['surface']};
+            }}
+        """)
+        self.clear_sel_btn.setFixedHeight(28)
+        self.clear_sel_btn.setEnabled(False)
+        self.clear_sel_btn.clicked.connect(self._on_clear_selection)
+        action_layout.addWidget(self.clear_sel_btn)
+
         self.delete_btn = QPushButton("Delete")
         self.delete_btn.setStyleSheet(f"""
             QPushButton {{
@@ -349,7 +372,6 @@ class ResearchWorkspace(QWidget):
             if result and ("sent" in str(result).lower() or "filled" in str(result).lower()):
                 self.statusUpdate.emit(f"Text sent to {platform}")
                 self.prompt_box.clear_text()
-                self.prompts_panel.clear_selection()
             else:
                 self.statusUpdate.emit(f"Failed to send: {result}")
 
@@ -588,6 +610,7 @@ class ResearchWorkspace(QWidget):
 
         self.delete_btn.setEnabled(count > 0)
         self.move_btn.setEnabled(count > 0)
+        self.clear_sel_btn.setEnabled(count > 0)
         if count > 0:
             self.selection_label.setText(f"{count} selected")
         else:
@@ -607,6 +630,12 @@ class ResearchWorkspace(QWidget):
                 if ph not in all_placeholders:
                     all_placeholders.append(ph)
         self.prompt_box.update_placeholders(all_placeholders)
+
+    def _on_clear_selection(self):
+        """Clear selections on all panels."""
+        self.prompts_panel.clear_selection()
+        self.responses_panel.clear_selection()
+        self.summaries_panel.clear_selection()
 
     def _get_active_panel(self) -> Optional[ItemsPanel]:
         """Return the currently active items panel, or None for Notebook."""
