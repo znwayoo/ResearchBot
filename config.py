@@ -19,7 +19,7 @@ WINDOW_HEIGHT = 900
 
 # Platform URLs (ordered: ChatGPT, Gemini, Perplexity, Claude, Google)
 PLATFORMS = {
-    "chatgpt": "https://chat.openai.com",
+    "chatgpt": "https://chatgpt.com",
     "gemini": "https://gemini.google.com",
     "perplexity": "https://www.perplexity.ai",
     "claude": "https://claude.ai",

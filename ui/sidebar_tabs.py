@@ -43,8 +43,55 @@ class BrowserPage(QWebEnginePage):
         settings.setAttribute(settings.WebAttribute.PdfViewerEnabled, True)
 
     def createWindow(self, _window_type):
-        """Handle requests to open links in new windows by navigating in the same view."""
-        return self._browser_view
+        """Handle popup windows (account switcher, OAuth) in a dialog."""
+        print(f"[POPUP] createWindow called from {self._browser_view.platform}, type={_window_type}")
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout
+        from PyQt6.QtCore import QSize
+
+        dialog = QDialog(self._browser_view.window())
+        dialog.setWindowTitle("Sign In")
+        dialog.resize(QSize(500, 700))
+        dialog.setModal(False)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        popup_view = QWebEngineView(dialog)
+        profile = self._browser_view.get_shared_profile()
+        popup_page = QWebEnginePage(profile, popup_view)
+        popup_view.setPage(popup_page)
+        layout.addWidget(popup_view)
+
+        from PyQt6.QtCore import QTimer
+        pending_url = [None]
+        nav_timer = QTimer(dialog)
+        nav_timer.setSingleShot(True)
+        nav_timer.setInterval(500)
+
+        def do_navigate():
+            if pending_url[0]:
+                self._browser_view.navigate(pending_url[0])
+                dialog.accept()
+
+        nav_timer.timeout.connect(do_navigate)
+
+        def on_url_changed(url):
+            url_str = url.toString()
+            platform_domains = {
+                "chatgpt": ["chat.openai.com", "chatgpt.com"],
+                "gemini": ["gemini.google.com"],
+                "perplexity": ["perplexity.ai"],
+                "claude": ["claude.ai"],
+                "google": ["google.com"],
+            }
+            match_domains = platform_domains.get(self._browser_view.platform, [])
+            if any(d in url_str for d in match_domains):
+                pending_url[0] = url_str
+                nav_timer.start()  # Reset the 500ms timer on each matching URL
+
+        popup_view.urlChanged.connect(on_url_changed)
+
+        dialog.show()
+        return popup_page
 
     def acceptNavigationRequest(self, url, nav_type, is_main_frame):
         """Accept all navigation requests. Redirect external links to Google tab for AI platforms."""
@@ -52,15 +99,44 @@ class BrowserPage(QWebEnginePage):
         platform = self._browser_view.platform
 
         # For AI platforms, intercept external link clicks and open in Google tab
+        if platform != "google" and is_main_frame:
+            print(f"[NAV] {platform}: {nav_type} -> {url_str[:120]}")
         if platform != "google" and is_main_frame and nav_type == QWebEnginePage.NavigationType.NavigationTypeLinkClicked:
             platform_domains = {
-                "chatgpt": "chat.openai.com",
-                "gemini": "gemini.google.com",
-                "perplexity": "perplexity.ai",
-                "claude": "claude.ai",
+                "chatgpt": ["chat.openai.com", "chatgpt.com", "openai.com"],
+                "gemini": ["gemini.google.com"],
+                "perplexity": ["perplexity.ai"],
+                "claude": ["claude.ai", "anthropic.com"],
             }
-            domain = platform_domains.get(platform, "")
-            if domain and domain not in url_str:
+            domains = platform_domains.get(platform, [])
+            # Allow auth/login domains to stay in the platform tab
+            auth_domains = [
+                "accounts.google.com",
+                "auth0.com",
+                "login.microsoftonline.com",
+                "appleid.apple.com",
+                "github.com/login",
+                "github.com/sessions",
+                "openai.com",
+                "anthropic.com",
+                "perplexity.ai",
+                "auth.perplexity",
+                "login.",
+                "signin.",
+                "signup.",
+                "logout.",
+                "oauth",
+                "/auth/",
+                "/login",
+                "/logout",
+                "/signin",
+                "/signup",
+                "/sso/",
+            ]
+            is_auth = any(auth in url_str for auth in auth_domains)
+            is_own_domain = any(d in url_str for d in domains)
+            if domains and not is_own_domain and not is_auth:
+                print(f"[NAV] Redirecting to Google tab: {platform} -> {url_str[:100]}")
                 self._browser_view.openInGoogleTab.emit(url_str)
                 return False
 
@@ -1674,9 +1750,19 @@ class PlatformTab(QWidget):
             self.browser.back()
 
     def _go_home(self):
-        """Navigate to the platform's home page."""
+        """Navigate to the platform's home page, preserving account context."""
         if self.browser:
-            self.browser.navigate(self.url)
+            current = self.browser.url().toString()
+            # Preserve Google account path (e.g. /u/1/) when going home
+            import re
+            account_match = re.search(r'/u/(\d+)/', current)
+            if account_match:
+                from urllib.parse import urlparse
+                parsed = urlparse(self.url)
+                home = f"{parsed.scheme}://{parsed.netloc}/u/{account_match.group(1)}/"
+                self.browser.navigate(home)
+            else:
+                self.browser.navigate(self.url)
 
     def _refresh_browser(self):
         """Refresh the browser."""
@@ -3482,6 +3568,7 @@ class BrowserTabs(QWidget):
 
     def _open_in_google_tab(self, url: str):
         """Open a URL in the Google tab browser."""
+        print(f"[GOOGLE TAB] Opening: {url[:100]}")
         if "google" in self.platform_tabs:
             google_tab = self.platform_tabs["google"]
             google_tab.browser.navigate(url)
