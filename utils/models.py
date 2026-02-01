@@ -29,26 +29,26 @@ class PlatformType(str, Enum):
 
 class CategoryType(str, Enum):
     """Research category types for prompts and responses."""
-    LITERATURE_REVIEW = "Literature Review"
-    METHODOLOGY = "Methodology / Methods"
-    DATA_EXTRACTION = "Data Extraction"
-    ANALYSIS = "Analysis / Interpretation"
-    RESULTS_SYNTHESIS = "Results Synthesis"
-    LIMITATIONS = "Limitations / Risks"
-    FUTURE_WORK = "Future Work / Ideas"
-    PROJECT_MANAGEMENT = "Project Management"
-    BACKGROUND = "Background / Theory"
+    EXPLORATION = "Exploration"
+    LITERATURE = "Literature"
+    METHODOLOGY = "Methodology"
+    DATA_METRICS = "Data & Metrics"
+    ARCHITECTURE = "Architecture"
+    IMPLEMENTATION = "Implementation"
+    ANALYSIS = "Analysis"
+    DRAFT = "Draft"
+    REFERENCE = "Reference"
     UNCATEGORIZED = "Uncategorized"
 
 
 class ColorLabel(str, Enum):
     """Color labels for visual organization."""
-    BLUE = "Blue"
-    GREEN = "Green"
-    YELLOW = "Yellow"
-    RED = "Red"
-    PURPLE = "Purple"
     GRAY = "Gray"
+    BLUE = "Blue"
+    PURPLE = "Purple"
+    GREEN = "Green"
+    ORANGE = "Orange"
+    RED = "Red"
 
 
 class UploadedFile(BaseModel):
@@ -122,7 +122,7 @@ class PromptItem(BaseModel):
     title: str
     content: str
     category: str = "Uncategorized"
-    color: str = "Purple"
+    color: str = "Blue"
     custom_color_hex: Optional[str] = None
     display_order: int = 0
     created_at: datetime = Field(default_factory=datetime.now)

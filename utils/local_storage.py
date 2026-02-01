@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import List
 
-from config import DB_PATH
+from config import DB_PATH, DEFAULT_PROMPTS
 from utils.models import (
     CategoryType,
     ColorLabel,
@@ -29,6 +29,7 @@ class LocalStorage:
     def __init__(self, db_path: str = None):
         self.db_path = db_path or str(DB_PATH)
         self._init_db()
+        self._seed_default_prompts()
 
     @contextmanager
     def _get_connection(self):
@@ -109,7 +110,7 @@ class LocalStorage:
                     title TEXT NOT NULL,
                     content TEXT NOT NULL,
                     category TEXT DEFAULT 'Uncategorized',
-                    color TEXT DEFAULT 'Purple',
+                    color TEXT DEFAULT 'Blue',
                     custom_color_hex TEXT,
                     display_order INTEGER DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -189,6 +190,31 @@ class LocalStorage:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_summaries_order ON summaries(display_order)")
 
             logger.info("Database initialized successfully")
+
+    def _seed_default_prompts(self):
+        """Insert default prompts if the prompts table is empty (first-time users)."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM prompts")
+            count = cursor.fetchone()[0]
+            if count > 0:
+                return
+
+            now = datetime.now().isoformat()
+            for order, prompt_data in enumerate(DEFAULT_PROMPTS):
+                cursor.execute("""
+                    INSERT INTO prompts (title, content, category, color, display_order, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    prompt_data["title"],
+                    prompt_data["content"],
+                    prompt_data["category"],
+                    prompt_data["color"],
+                    order,
+                    now,
+                    now,
+                ))
+            logger.info(f"Seeded {len(DEFAULT_PROMPTS)} default prompts")
 
     def create_session(self) -> str:
         """Create a new session and return session_id."""
@@ -421,7 +447,7 @@ class LocalStorage:
                 title=row["title"],
                 content=row["content"],
                 category=row["category"] or "Uncategorized",
-                color=row["color"] or "Purple",
+                color=row["color"] or "Blue",
                 custom_color_hex=row["custom_color_hex"],
                 display_order=row["display_order"],
                 created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else datetime.now(),

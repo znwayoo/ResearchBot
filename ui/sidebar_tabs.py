@@ -1,12 +1,16 @@
 """Sidebar tabs widget with embedded browser views, logs, and markdown notebook."""
 
 import os
+import re
+import subprocess
 import time
 from datetime import datetime
+from html import unescape
 from pathlib import Path
 from typing import Dict, Optional
+from urllib.parse import urlparse
 
-from PyQt6.QtCore import Qt, QUrl, pyqtSignal, QTimer, QEvent
+from PyQt6.QtCore import Qt, QSize, QUrl, pyqtSignal, QTimer, QEvent
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineDownloadRequest, QWebEngineProfile, QWebEnginePage
 from PyQt6.QtWidgets import (
@@ -23,6 +27,7 @@ from PyQt6.QtWidgets import (
     QTabWidget,
     QTextEdit,
     QToolBar,
+    QDialog,
     QVBoxLayout,
     QWidget,
 )
@@ -45,9 +50,6 @@ class BrowserPage(QWebEnginePage):
     def createWindow(self, _window_type):
         """Handle popup windows (account switcher, OAuth) in a dialog."""
         print(f"[POPUP] createWindow called from {self._browser_view.platform}, type={_window_type}")
-        from PyQt6.QtWidgets import QDialog, QVBoxLayout
-        from PyQt6.QtCore import QSize
-
         dialog = QDialog(self._browser_view.window())
         dialog.setWindowTitle("Sign In")
         dialog.resize(QSize(500, 700))
@@ -61,7 +63,6 @@ class BrowserPage(QWebEnginePage):
         popup_view.setPage(popup_page)
         layout.addWidget(popup_view)
 
-        from PyQt6.QtCore import QTimer
         pending_url = [None]
         nav_timer = QTimer(dialog)
         nav_timer.setSingleShot(True)
@@ -1754,10 +1755,10 @@ class PlatformTab(QWidget):
         if self.browser:
             current = self.browser.url().toString()
             # Preserve Google account path (e.g. /u/1/) when going home
-            import re
+    
             account_match = re.search(r'/u/(\d+)/', current)
             if account_match:
-                from urllib.parse import urlparse
+
                 parsed = urlparse(self.url)
                 home = f"{parsed.scheme}://{parsed.netloc}/u/{account_match.group(1)}/"
                 self.browser.navigate(home)
@@ -2384,7 +2385,7 @@ class MarkdownNotebookTab(QWidget):
 
     def _apply_live_markdown(self):
         """Apply Notion-like live markdown formatting when patterns are completed."""
-        import re
+
 
         # Prevent recursion
         if getattr(self, '_applying_markdown', False):
@@ -2683,7 +2684,7 @@ class MarkdownNotebookTab(QWidget):
         Parses markdown line by line and builds the document directly so
         blank lines are preserved as empty blocks.
         """
-        import re
+
 
         self.editor.clear()
         cursor = self.editor.textCursor()
@@ -2793,15 +2794,15 @@ class MarkdownNotebookTab(QWidget):
             current_list = None
             current_list_type = None
             # Only apply inline markdown parsing if line has markdown syntax
-            import re as _re
-            if _re.search(r'\*\*|__|\*|_|~~|`|<u>|</u>', stripped):
+
+            if re.search(r'\*\*|__|\*|_|~~|`|<u>|</u>', stripped):
                 self._insert_inline_markdown(cursor, stripped)
             else:
                 cursor.insertText(stripped)
 
     def _insert_inline_markdown(self, cursor, text, base_fmt=None):
         """Parse inline markdown (bold, italic, strikethrough) and insert formatted text."""
-        import re
+
 
         if base_fmt is None:
             base_fmt = QTextCharFormat()
@@ -2886,7 +2887,7 @@ class MarkdownNotebookTab(QWidget):
                 self.editor.blockSignals(False)
 
                 # Extract title from filename
-                from pathlib import Path
+
                 self.title_input.setText(Path(file_path).stem)
                 self._current_file = file_path
                 self._is_modified = False
@@ -2903,8 +2904,8 @@ class MarkdownNotebookTab(QWidget):
         causes segfaults in PyQt6. Uses toHtml() (safe) and converts
         the HTML to markdown by walking block-level elements in order.
         """
-        import re
-        from html import unescape
+
+
 
         html = self.editor.toHtml()
 
@@ -2996,8 +2997,8 @@ class MarkdownNotebookTab(QWidget):
 
     def _html_inline_to_md(self, html_text, skip_bold=False, skip_italic=False):
         """Convert inline HTML formatting to markdown syntax."""
-        import re
-        from html import unescape
+
+
 
         text = html_text
 
@@ -3129,7 +3130,7 @@ class MarkdownNotebookTab(QWidget):
 
                 self._current_file = file_path
                 self._is_modified = False
-                from pathlib import Path
+
                 self.file_label.setText(Path(file_path).name)
                 # Update title box if it was empty
                 if not self.title_input.text().strip():
@@ -3287,13 +3288,13 @@ class DownloadEntry(QFrame):
 
     def _open_file(self):
         """Open the downloaded file with the system default app."""
-        import subprocess
+
         if os.path.exists(self.filepath):
             subprocess.Popen(["open", self.filepath])
 
     def _open_folder(self):
         """Reveal the file in Finder."""
-        import subprocess
+
         if os.path.exists(self.filepath):
             subprocess.Popen(["open", "-R", self.filepath])
         elif os.path.isdir(self.directory):
