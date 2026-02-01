@@ -243,6 +243,7 @@ class ResearchWorkspace(QWidget):
         self.prompt_box.savePromptRequested.connect(self._on_save_prompt)
         self.prompt_box.deleteSelectedRequested.connect(self._on_delete_selected)
         self.prompt_box.filesChanged.connect(self._on_files_changed)
+        self.notebook_tab.createPromptRequested.connect(self._on_notebook_create_prompt)
 
     def _load_data(self):
         prompts = self.storage.get_all_prompts()
@@ -430,6 +431,22 @@ class ResearchWorkspace(QWidget):
                 )
             )
             worker.start()
+
+    def _on_notebook_create_prompt(self, title: str, content: str):
+        """Create a prompt pill from the notebook content."""
+        prompt_item = PromptItem(
+            title=title,
+            content=content,
+            category="Uncategorized",
+            color="Gray",
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+        prompt_id = self.storage.save_prompt(prompt_item)
+        prompt_item.id = prompt_id
+        self.prompts_panel.add_item(prompt_item)
+        self.tabs.setCurrentIndex(0)
+        self.statusUpdate.emit("Prompt created from notebook")
 
     def _strip_references(self, text: str) -> str:
         """Strip bibliography/references section from extracted text."""

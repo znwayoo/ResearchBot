@@ -1978,6 +1978,8 @@ class LogTab(QWidget):
 class MarkdownNotebookTab(QWidget):
     """Rich text notebook editor with Word/Google Docs-like formatting, saves as Markdown."""
 
+    createPromptRequested = pyqtSignal(str, str)  # title, markdown content
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._current_file = None
@@ -2055,6 +2057,29 @@ class MarkdownNotebookTab(QWidget):
         self.number_btn = self._create_toolbar_btn("Numbered List", self._toggle_number_list)
         row2_layout.addWidget(self.bullet_btn)
         row2_layout.addWidget(self.number_btn)
+
+        row2_layout.addWidget(self._create_separator())
+
+        self.create_prompt_btn = QPushButton("Create Prompt")
+        self.create_prompt_btn.setFixedHeight(26)
+        self.create_prompt_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DARK_THEME['surface_light']};
+                color: {DARK_THEME['text_primary']};
+                border: 1px solid {DARK_THEME['border']};
+                border-radius: 4px;
+                padding: 2px 10px;
+                font-size: 11px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: #9C27B0;
+                color: white;
+                border-color: #9C27B0;
+            }}
+        """)
+        self.create_prompt_btn.clicked.connect(self._create_prompt_from_notebook)
+        row2_layout.addWidget(self.create_prompt_btn)
 
         row2_layout.addStretch()
 
@@ -3144,6 +3169,22 @@ class MarkdownNotebookTab(QWidget):
             block = block.next()
 
         cursor.endEditBlock()
+
+    def _create_prompt_from_notebook(self):
+        """Create a prompt pill from the current notebook content."""
+        content = self._document_to_markdown()
+        if not content or not content.strip():
+            self.status_label.setText("Nothing to create")
+            self.status_label.setStyleSheet(f"color: {DARK_THEME['warning']}; font-size: 11px;")
+            return
+
+        title = self.title_input.text().strip() or content[:80].replace("\n", " ").strip()
+        if len(title) > 80:
+            title = title[:77] + "..."
+
+        self.createPromptRequested.emit(title, content)
+        self.status_label.setText("Prompt created")
+        self.status_label.setStyleSheet(f"color: {DARK_THEME['success']}; font-size: 11px;")
 
     def _save_document(self):
         """Save the current document as Markdown."""
