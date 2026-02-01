@@ -1,8 +1,20 @@
 """Main entry point for ResearchBot."""
 
 import logging
+import platform
 import sys
 import traceback
+
+if platform.system() == "Darwin":
+    # Set the macOS menu bar app name before QApplication is created
+    try:
+        from Foundation import NSBundle
+        bundle = NSBundle.mainBundle()
+        info = bundle.localizedInfoDictionary() or bundle.infoDictionary()
+        if info:
+            info["CFBundleName"] = "ResearchBot"
+    except ImportError:
+        pass
 
 # WebEngine must be imported before QApplication is created
 from PyQt6.QtWebEngineWidgets import QWebEngineView  # noqa: F401

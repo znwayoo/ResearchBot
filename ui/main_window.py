@@ -4,13 +4,19 @@ import uuid
 from datetime import datetime
 from typing import Optional, List
 
+from pathlib import Path
+
 from PyQt6.QtCore import QSettings, Qt, QTimer, pyqtSignal, QObject
+from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
+    QDialog,
     QFileDialog,
     QHBoxLayout,
+    QLabel,
     QMainWindow,
     QMessageBox,
     QProgressBar,
+    QPushButton,
     QSplitter,
     QStatusBar,
     QVBoxLayout,
@@ -648,14 +654,100 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("New session started")
 
     def _show_about(self):
-        QMessageBox.about(
-            self,
-            f"About {APP_NAME}",
-            f"{APP_NAME} v{APP_VERSION}\n\n"
-            "Desktop research tool that lets you query multiple AI platforms, "
-            "grab and organize responses, and export your findings from one place.\n\n"
-            "Built with Python and PyQt6."
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"About {APP_NAME}")
+        dialog.setFixedSize(480, 480)
+        dialog.setStyleSheet(f"""
+            QDialog {{
+                background-color: {DARK_THEME['background']};
+            }}
+            QLabel {{
+                background-color: transparent;
+                color: {DARK_THEME['text_primary']};
+            }}
+            QPushButton {{
+                background-color: transparent;
+            }}
+        """)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(28, 24, 28, 20)
+        layout.setSpacing(12)
+
+        # App name and version
+        title = QLabel(f"{APP_NAME}")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("font-size: 22px; font-weight: bold; color: white;")
+        layout.addWidget(title)
+
+        version = QLabel(f"v{APP_VERSION}")
+        version.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        version.setStyleSheet(f"font-size: 12px; color: {DARK_THEME['text_secondary']};")
+        layout.addWidget(version)
+
+        # Description
+        desc = QLabel(
+            "A prompt management and research tool that embeds multiple AI platforms "
+            "side by side with an organized workspace. Build, save, and reuse prompt "
+            "templates, send them to ChatGPT, Gemini, Claude, or Perplexity, grab "
+            "responses back, and export your findings."
         )
+        desc.setWordWrap(True)
+        desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        desc.setStyleSheet(f"font-size: 12px; color: {DARK_THEME['text_primary']}; padding: 4px 0;")
+        layout.addWidget(desc)
+
+        layout.addSpacing(4)
+
+        # QR code
+        qr_label = QLabel("Scan to visit GitHub repository")
+        qr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        qr_label.setStyleSheet(f"font-size: 11px; color: {DARK_THEME['text_secondary']};")
+        layout.addWidget(qr_label)
+
+        qr_image = QLabel()
+        qr_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        qr_path = Path(__file__).parent.parent / "assets" / "qr.png"
+        if qr_path.exists():
+            pixmap = QPixmap(str(qr_path))
+            qr_image.setPixmap(pixmap.scaled(
+                180, 180,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            ))
+        layout.addWidget(qr_image)
+
+        # Footer
+        footer = QLabel("Built with Python and PyQt6")
+        footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        footer.setStyleSheet(f"font-size: 10px; color: {DARK_THEME['text_secondary']};")
+        layout.addWidget(footer)
+
+        layout.addSpacing(4)
+
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.setFixedWidth(100)
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DARK_THEME['error']};
+                color: white;
+                border-radius: 4px;
+                padding: 6px 16px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: #D32F2F;
+            }}
+        """)
+        close_btn.clicked.connect(dialog.accept)
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        btn_layout.addWidget(close_btn)
+        btn_layout.addStretch()
+        layout.addLayout(btn_layout)
+
+        dialog.exec()
 
     def closeEvent(self, event):
         self._save_settings()

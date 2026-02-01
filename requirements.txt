@@ -1,19 +1,9 @@
-# Core dependencies
-pydantic>=2.5.0
-PyQt6>=6.6.0
-PyQt6-WebEngine>=6.6.0
-PyPDF2>=3.0.0
-python-docx>=0.8.11
-reportlab>=4.0.7
-pyperclip>=1.8.2
-
-# Development dependencies
-pytest>=7.4.0
-pytest-cov>=4.1.0
-black>=23.12.0
-pylint>=3.0.0
-mypy>=1.8.0
-ruff>=0.1.0
-
-# Build tools
-pyinstaller>=6.3.0
+PyQt6==6.10.2
+PyQt6-WebEngine==6.10.0
+PyPDF2==3.0.1
+pydantic==2.12.5
+playwright==1.57.0
+pyperclip==1.11.0
+python-docx==1.2.0
+reportlab==4.4.9
+pyobjc-framework-Cocoa==12.1; sys_platform == "darwin"
