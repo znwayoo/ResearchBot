@@ -6,12 +6,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import List
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QEvent
+from PyQt6.QtGui import QTextCursor
 from PyQt6.QtWidgets import (
     QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
@@ -81,8 +84,11 @@ class PromptManagementBox(QWidget):
         self.uploaded_files: List[UploadedFile] = []
         self.file_chips: List[FileChip] = []
         self._has_selection = False
+        self._active_placeholders: List[str] = []
+        self._slash_prefix = ""
 
         self._setup_ui()
+        self._setup_completion_popup()
 
     def _setup_ui(self):
         self.setStyleSheet(f"background-color: {DARK_THEME['background']};")
@@ -241,6 +247,150 @@ class PromptManagementBox(QWidget):
         button_layout.addWidget(self.save_btn)
 
         layout.addWidget(button_container)
+
+    def _setup_completion_popup(self):
+        """Create the floating completion popup for placeholder selection."""
+        self._popup = QListWidget(self)
+        self._popup.setWindowFlags(Qt.WindowType.ToolTip)
+        self._popup.setStyleSheet(f"""
+            QListWidget {{
+                background-color: {DARK_THEME['surface']};
+                color: {DARK_THEME['text_primary']};
+                border: 1px solid {DARK_THEME['accent']};
+                border-radius: 4px;
+                font-size: 13px;
+                padding: 4px;
+            }}
+            QListWidget::item {{
+                padding: 6px 10px;
+            }}
+            QListWidget::item:selected {{
+                background-color: {DARK_THEME['accent']};
+                color: white;
+            }}
+            QListWidget::item:hover {{
+                background-color: {DARK_THEME['surface_light']};
+            }}
+        """)
+        self._popup.setMaximumHeight(160)
+        self._popup.setMaximumWidth(260)
+        self._popup.hide()
+        self._popup.itemActivated.connect(self._on_popup_item_selected)
+
+        self.text_edit.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        """Intercept key events on the text edit for slash completion."""
+        if obj is not self.text_edit:
+            return super().eventFilter(obj, event)
+
+        if event.type() == QEvent.Type.KeyPress:
+            if self._popup.isVisible():
+                key = event.key()
+                if key == Qt.Key.Key_Escape:
+                    self._popup.hide()
+                    return True
+                if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                    current = self._popup.currentItem()
+                    if current:
+                        self._on_popup_item_selected(current)
+                        return True
+                if key == Qt.Key.Key_Down:
+                    row = self._popup.currentRow()
+                    if row < self._popup.count() - 1:
+                        self._popup.setCurrentRow(row + 1)
+                    return True
+                if key == Qt.Key.Key_Up:
+                    row = self._popup.currentRow()
+                    if row > 0:
+                        self._popup.setCurrentRow(row - 1)
+                    return True
+                # Typing filters the list
+                if key == Qt.Key.Key_Backspace:
+                    if self._slash_prefix:
+                        self._slash_prefix = self._slash_prefix[:-1]
+                    else:
+                        self._popup.hide()
+                        return False
+                    self._filter_popup()
+                    return False
+                text = event.text()
+                if text and text.isprintable() and text != '/':
+                    self._slash_prefix += text.upper()
+                    self._filter_popup()
+                    return False
+
+            # Detect '/' typed when popup is not visible
+            if event.text() == '/' and self._active_placeholders:
+                self._slash_prefix = ""
+                self._show_popup()
+
+        return super().eventFilter(obj, event)
+
+    def _show_popup(self):
+        """Show the placeholder completion popup."""
+        self._popup.clear()
+        for name in self._active_placeholders:
+            item = QListWidgetItem(f"[/{name}]")
+            item.setData(Qt.ItemDataRole.UserRole, name)
+            self._popup.addItem(item)
+
+        if self._popup.count() == 0:
+            return
+
+        self._popup.setCurrentRow(0)
+
+        # Position below the text cursor
+        cursor_rect = self.text_edit.cursorRect()
+        global_pos = self.text_edit.mapToGlobal(cursor_rect.bottomLeft())
+        self._popup.move(global_pos)
+        self._popup.setFixedWidth(max(200, self._popup.sizeHintForColumn(0) + 30))
+        self._popup.show()
+        self._popup.raise_()
+
+    def _filter_popup(self):
+        """Filter popup items based on typed prefix after '/'."""
+        for i in range(self._popup.count()):
+            item = self._popup.item(i)
+            name = item.data(Qt.ItemDataRole.UserRole)
+            item.setHidden(not name.startswith(self._slash_prefix))
+
+        # Select first visible
+        for i in range(self._popup.count()):
+            item = self._popup.item(i)
+            if not item.isHidden():
+                self._popup.setCurrentItem(item)
+                break
+
+        # Hide if nothing matches
+        visible = any(not self._popup.item(i).isHidden() for i in range(self._popup.count()))
+        if not visible:
+            self._popup.hide()
+
+    def _on_popup_item_selected(self, item):
+        """Insert the selected placeholder into the text edit."""
+        name = item.data(Qt.ItemDataRole.UserRole)
+        self._popup.hide()
+
+        cursor = self.text_edit.textCursor()
+
+        # Remove the '/' and any typed filter text from the editor
+        chars_to_remove = 1 + len(self._slash_prefix)  # '/' + filter chars
+        for _ in range(chars_to_remove):
+            cursor.deletePreviousChar()
+
+        # Insert [/NAME]=""
+        insert_text = f'[/{name}]="'
+        cursor.insertText(insert_text)
+        # Save position between quotes, then insert closing quote
+        cursor.insertText('"')
+        cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.MoveAnchor, 1)
+        self.text_edit.setTextCursor(cursor)
+        self.text_edit.setFocus()
+
+    def update_placeholders(self, placeholders: List[str]):
+        """Update the list of available placeholders from selected pills."""
+        self._active_placeholders = placeholders
 
     def set_selection_active(self, has_selection: bool):
         """Track selection state (delete button moved to items panel)."""

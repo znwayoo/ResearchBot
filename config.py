@@ -90,14 +90,14 @@ DEFAULT_PROMPTS = [
         "color": "Blue",
         "content": (
             "You are a research intelligence analyst. Your task is to produce a "
-            "comprehensive, well-sourced briefing on [TOPIC] that enables a researcher "
+            "comprehensive, well-sourced briefing on [/TOPIC] that enables a researcher "
             "to go from zero knowledge to informed decision-making.\n\n"
             "Structure your response as follows:\n\n"
             "## 1. Executive Summary\n"
-            "- One-paragraph definition of [TOPIC] and why it matters right now\n"
+            "- One-paragraph definition of [/TOPIC] and why it matters right now\n"
             "- The single most important thing a newcomer should understand\n\n"
             "## 2. Landscape Map\n"
-            "- Break [TOPIC] into 3-5 major sub-domains or branches\n"
+            "- Break [/TOPIC] into 3-5 major sub-domains or branches\n"
             "- For each: one-sentence description, key differentiator, and maturity level "
             "(emerging / growing / mature / declining)\n"
             "- Show how these sub-domains relate to each other (dependencies, tensions, overlaps)\n\n"
@@ -127,7 +127,7 @@ DEFAULT_PROMPTS = [
         "color": "Blue",
         "content": (
             "You are an expert peer reviewer. Perform a thorough, structured analysis of "
-            "the following paper: [PAPER TITLE / URL / PASTE ABSTRACT].\n\n"
+            "the following paper: [/PAPER_TITLE].\n\n"
             "Approach this as if you are writing a detailed review for a top-tier venue. "
             "Be specific, cite sections/figures/tables by number, and distinguish between "
             "what the authors claim and what the evidence actually supports.\n\n"
@@ -170,7 +170,7 @@ DEFAULT_PROMPTS = [
         "color": "Blue",
         "content": (
             "You are a systematic review specialist. Produce a structured literature "
-            "survey on [TOPIC] that maps the research landscape and identifies patterns "
+            "survey on [/TOPIC] that maps the research landscape and identifies patterns "
             "across the body of work.\n\n"
             "Do not just list papers. Synthesize, compare, and identify trends.\n\n"
             "## 1. Scope and Search Strategy\n"
@@ -210,9 +210,9 @@ DEFAULT_PROMPTS = [
         "color": "Purple",
         "content": (
             "You are a methods expert tasked with producing a rigorous, decision-ready "
-            "comparison. Compare the following approaches to [PROBLEM]:\n"
-            "- Approach A: [APPROACH A]\n"
-            "- Approach B: [APPROACH B]\n"
+            "comparison. Compare the following approaches to [/PROBLEM]:\n"
+            "- Approach A: [/APPROACH_A]\n"
+            "- Approach B: [/APPROACH_B]\n"
             "(Add more approaches as needed)\n\n"
             "Your analysis should help a practitioner choose the right approach for their "
             "specific situation, not just list differences.\n\n"
@@ -250,8 +250,8 @@ DEFAULT_PROMPTS = [
         "color": "Green",
         "content": (
             "You are a data sourcing specialist. Find and evaluate the best available "
-            "datasets and benchmarks for research in [RESEARCH AREA], specifically for "
-            "the task of [SPECIFIC TASK].\n\n"
+            "datasets and benchmarks for research in [/RESEARCH_AREA], specifically for "
+            "the task of [/SPECIFIC_TASK].\n\n"
             "Go beyond simple listing. Evaluate fitness for purpose and flag risks.\n\n"
             "## 1. Tier 1: Standard Benchmarks\n"
             "For each of the top 3-5 most widely used datasets:\n"
@@ -276,7 +276,7 @@ DEFAULT_PROMPTS = [
             "  - Geographic or demographic representation gaps\n"
             "  - Known adversarial or problematic samples\n\n"
             "## 5. Recommendation\n"
-            "- Best dataset for [SPECIFIC TASK] with justification\n"
+            "- Best dataset for [/SPECIFIC_TASK] with justification\n"
             "- Suggested preprocessing pipeline\n"
             "- If no perfect dataset exists, describe what an ideal one would look like "
             "and whether synthetic augmentation could fill gaps"
@@ -288,7 +288,7 @@ DEFAULT_PROMPTS = [
         "color": "Green",
         "content": (
             "You are a senior engineer writing a practical implementation guide. "
-            "Create a production-quality walkthrough for implementing [TECHNIQUE/METHOD] "
+            "Create a production-quality walkthrough for implementing [/TECHNIQUE_METHOD] "
             "that takes someone from concept to working code.\n\n"
             "Assume the reader is technically competent but new to this specific method. "
             "Prioritize working code over theory.\n\n"
@@ -332,7 +332,7 @@ DEFAULT_PROMPTS = [
         "color": "Orange",
         "content": (
             "You are a rigorous academic reviewer and critical thinker. Evaluate the "
-            "following claim, paper, or method: [CLAIM/PAPER/METHOD].\n\n"
+            "following claim, paper, or method: [/CLAIM_PAPER_METHOD].\n\n"
             "Your job is to stress-test this work. Be respectful but unsparing. "
             "Every criticism must be specific and accompanied by a constructive suggestion. "
             "Avoid generic complaints.\n\n"
@@ -373,7 +373,7 @@ DEFAULT_PROMPTS = [
         "color": "Blue",
         "content": (
             "You are a competitive intelligence analyst for research. Provide a precise, "
-            "up-to-date snapshot of the state-of-the-art for [TASK/PROBLEM].\n\n"
+            "up-to-date snapshot of the state-of-the-art for [/TASK_PROBLEM].\n\n"
             "Be concrete. Cite exact numbers, method names, and dates. "
             "Do not use vague terms like 'recent advances' without specifics.\n\n"
             "## 1. Leaderboard Snapshot\n"
@@ -395,7 +395,7 @@ DEFAULT_PROMPTS = [
             "- What differentiates the #1 method from the #2-5 methods?\n"
             "- Are improvements coming from architecture, data, training, or all three?\n\n"
             "## 5. Remaining Gaps\n"
-            "- What aspects of [TASK/PROBLEM] are current methods still bad at?\n"
+            "- What aspects of [/TASK_PROBLEM] are current methods still bad at?\n"
             "- What is the theoretical upper bound or human-level performance?\n"
             "- What would a breakthrough in this area look like?\n\n"
             "## 6. Trajectory\n"
@@ -410,7 +410,7 @@ DEFAULT_PROMPTS = [
         "color": "Orange",
         "content": (
             "You are an experienced academic writer and research communicator. "
-            "Create a publication-ready outline for a research document on [TOPIC].\n\n"
+            "Create a publication-ready outline for a research document on [/TOPIC].\n\n"
             "This outline should be detailed enough that a knowledgeable collaborator could "
             "write a full draft from it with minimal back-and-forth.\n\n"
             "## 1. Document Metadata\n"
@@ -452,7 +452,7 @@ DEFAULT_PROMPTS = [
         "category": "Reference",
         "color": "Gray",
         "content": (
-            "You are a world-class educator. Explain [CONCEPT] in a way that builds "
+            "You are a world-class educator. Explain [/CONCEPT] in a way that builds "
             "genuine understanding, not just surface familiarity.\n\n"
             "Layer the explanation from intuitive to rigorous. The reader should finish "
             "with both intuition and precision.\n\n"

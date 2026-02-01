@@ -18,6 +18,12 @@ from PyQt6.QtWidgets import (
 )
 
 from config import DARK_THEME
+from utils.placeholder_utils import (
+    extract_placeholders,
+    parse_placeholder_values,
+    strip_placeholder_entries,
+    substitute_placeholders,
+)
 from ui.item_editor import ItemEditorDialog
 from ui.sidebar_tabs import MarkdownNotebookTab
 from ui.items_panel import ItemsPanel
@@ -301,13 +307,20 @@ class ResearchWorkspace(QWidget):
         selected_prompts = self.prompts_panel.get_selected_items()
         box_text = self.prompt_box.get_text()
 
+        # Parse placeholder values from box text and substitute into prompts
+        placeholder_values = parse_placeholder_values(box_text)
+        clean_box_text = strip_placeholder_entries(box_text) if placeholder_values else box_text
+
         combined_parts = []
 
         for prompt in selected_prompts:
-            combined_parts.append(prompt.content)
+            content = prompt.content
+            if placeholder_values:
+                content = substitute_placeholders(content, placeholder_values)
+            combined_parts.append(content)
 
-        if box_text:
-            combined_parts.append(box_text)
+        if clean_box_text:
+            combined_parts.append(clean_box_text)
 
         if not combined_parts:
             self.statusUpdate.emit("No text to send")
@@ -515,6 +528,14 @@ class ResearchWorkspace(QWidget):
             len(self.summaries_panel.get_selected_items())
         )
         self.prompt_box.set_selection_active(total_selected > 0)
+
+        # Extract placeholders from selected prompts and pass to prompt box
+        all_placeholders = []
+        for prompt in self.prompts_panel.get_selected_items():
+            for ph in extract_placeholders(prompt.content):
+                if ph not in all_placeholders:
+                    all_placeholders.append(ph)
+        self.prompt_box.update_placeholders(all_placeholders)
 
     def _get_active_panel(self) -> Optional[ItemsPanel]:
         """Return the currently active items panel, or None for Notebook."""
