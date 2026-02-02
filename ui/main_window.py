@@ -4,8 +4,6 @@ import uuid
 from datetime import datetime
 from typing import Optional, List
 
-from pathlib import Path
-
 from PyQt6.QtCore import QSettings, Qt, QTimer, pyqtSignal, QObject
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
@@ -26,7 +24,7 @@ from PyQt6.QtWidgets import (
 from agents.file_context_injector import FileContextInjector
 from agents.response_merger import ResponseMerger
 from agents.task_analyzer import TaskAnalyzer
-from config import APP_NAME, APP_VERSION, DARK_THEME, WINDOW_HEIGHT, WINDOW_WIDTH
+from config import APP_NAME, APP_VERSION, ASSETS_DIR, DARK_THEME, WINDOW_HEIGHT, WINDOW_WIDTH
 from ui.research_workspace import ResearchWorkspace
 from ui.sidebar_tabs import BrowserTabs
 from utils.clipboard_parser import ClipboardParser
@@ -707,7 +705,7 @@ class MainWindow(QMainWindow):
 
         qr_image = QLabel()
         qr_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        qr_path = Path(__file__).parent.parent / "assets" / "qr.png"
+        qr_path = ASSETS_DIR / "qr.png"
         if qr_path.exists():
             pixmap = QPixmap(str(qr_path))
             qr_image.setPixmap(pixmap.scaled(

@@ -9,7 +9,6 @@ from typing import List
 from PyQt6.QtCore import Qt, pyqtSignal, QEvent, QRect
 from PyQt6.QtGui import QColor, QPainter, QPen, QTextCursor
 from PyQt6.QtWidgets import (
-    QApplication,
     QCheckBox,
     QFileDialog,
     QFrame,

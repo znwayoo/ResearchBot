@@ -45,23 +45,3 @@ class TaskAnalyzer:
             )
 
         return prompt
-
-    @staticmethod
-    def get_task_description(task_type: str) -> str:
-        """Get human-readable description of a task type."""
-        descriptions = {
-            "initial": "Initial Research - Broad exploration of the topic",
-            "targeted": "Targeted Research - Deep dive into specific aspects",
-            "draft": "Draft Generation - Create initial content structure"
-        }
-        return descriptions.get(task_type.lower(), "Research Task")
-
-    @staticmethod
-    def get_platform_specialty(platform: str) -> str:
-        """Get description of what each platform specializes in."""
-        specialties = {
-            "perplexity": "Web search and factual research with sources",
-            "gemini": "Analysis, reasoning, and multi-perspective insights",
-            "chatgpt": "Strategic advice, writing, and creative solutions"
-        }
-        return specialties.get(platform.lower(), "General AI assistance")

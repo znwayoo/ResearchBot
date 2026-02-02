@@ -1,8 +1,15 @@
 """ResearchBot configuration settings."""
 
-import os
 import logging
+import sys
 from pathlib import Path
+
+# Base path for app (works when frozen by PyInstaller or running from source)
+if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+    APP_BASE_PATH = Path(sys._MEIPASS)
+else:
+    APP_BASE_PATH = Path(__file__).resolve().parent
+ASSETS_DIR = APP_BASE_PATH / "assets"
 
 # Application paths
 CONFIG_DIR = Path.home() / ".researchbot"

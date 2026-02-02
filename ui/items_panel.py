@@ -13,8 +13,6 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QVBoxLayout,
     QWidget,
-    QStyle,
-    QStyleOptionComboBox,
 )
 
 from config import COLOR_PALETTE, DARK_THEME, DEFAULT_CATEGORIES

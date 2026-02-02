@@ -68,6 +68,7 @@ dmypy.json
 # PyInstaller
 *.manifest
 *.spec
+!ResearchBot.spec
 
 # Instructions folder
 instructions/
