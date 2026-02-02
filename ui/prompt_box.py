@@ -401,12 +401,16 @@ class PromptManagementBox(QWidget):
         return super().eventFilter(obj, event)
 
     def _show_popup(self):
-        """Show the placeholder completion popup."""
+        """Show the placeholder completion popup, excluding already used placeholders."""
+        current_text = self.text_edit.toPlainText()
+        used = {name for name in self._active_placeholders if f"[/{name}]" in current_text}
+
         self._popup.clear()
         for name in self._active_placeholders:
-            item = QListWidgetItem(f"[/{name}]")
-            item.setData(Qt.ItemDataRole.UserRole, name)
-            self._popup.addItem(item)
+            if name not in used:
+                item = QListWidgetItem(f"[/{name}]")
+                item.setData(Qt.ItemDataRole.UserRole, name)
+                self._popup.addItem(item)
 
         if self._popup.count() == 0:
             return
