@@ -280,7 +280,7 @@ class PlatformBrowser(QWebEngineView):
 
         # Add "Open in Google Tab" for non-Google platforms if there's a link
         if self.platform != "google":
-            last_context = self.page().contextMenuData()
+            last_context = self.lastContextMenuRequest()
             link_url = last_context.linkUrl()
             if link_url.isValid() and link_url.toString():
                 open_google_action = menu.addAction("Open in Google Tab")
