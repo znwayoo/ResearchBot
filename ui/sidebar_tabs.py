@@ -251,6 +251,9 @@ class PlatformBrowser(QWebEngineView):
         """Configure the browser with persistent storage."""
         profile = self.get_shared_profile()
         page = BrowserPage(profile, self, self)
+        page.renderProcessTerminated.connect(
+            lambda status, code: print(f"[RENDERER] {self.platform} terminated: status={status}, code={code}")
+        )
         self.setPage(page)
 
         self.loadFinished.connect(self._on_load_finished)
