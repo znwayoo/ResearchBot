@@ -57,6 +57,6 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='ResearchBot.app',
-    icon=None,
+    icon='assets/ResearchBot.icns',
     bundle_identifier=None,
 )
