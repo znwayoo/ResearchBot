@@ -97,4 +97,4 @@ Everything is stored locally in `~/.researchbot/`:
 
 ## License
 
-This project is provided as-is for personal research use.
+Free to use and redistribute. Modification and distribution of modified versions is not permitted without permission. See [LICENSE](LICENSE) for details.
