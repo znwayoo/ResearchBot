@@ -9,6 +9,7 @@ from typing import List
 from PyQt6.QtCore import Qt, pyqtSignal, QEvent, QRect
 from PyQt6.QtGui import QColor, QPainter, QPen, QTextCursor
 from PyQt6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QFileDialog,
     QFrame,
@@ -130,6 +131,8 @@ class PromptManagementBox(QWidget):
         self._has_selection = False
         self._active_placeholders: List[str] = []
         self._slash_prefix = ""
+        self._tab_texts = {0: "", 1: "", 2: ""}
+        self._current_tab = 0
 
         self._setup_ui()
         self._setup_completion_popup()
@@ -347,9 +350,12 @@ class PromptManagementBox(QWidget):
         self.text_edit.installEventFilter(self)
 
     def eventFilter(self, obj, event):
-        """Intercept key events on the text edit for slash completion."""
+        """Intercept key events on the text edit and global clicks for slash completion."""
         if obj is not self.text_edit:
             return super().eventFilter(obj, event)
+
+        if event.type() == QEvent.Type.FocusOut:
+            self._popup.hide()
 
         if event.type() == QEvent.Type.KeyPress:
             if self._popup.isVisible():
@@ -576,13 +582,23 @@ class PromptManagementBox(QWidget):
         self.filesChanged.emit([])
 
     def set_active_tab(self, tab_index: int):
-        """Update button states based on the active workspace tab.
+        """Update button states and swap prompt box text based on the active tab.
 
         0 = Prompts: Send, Save as Prompt, Upload Files active
         1 = Responses: Grab, Summarize active
-        2 = Summaries: Grab active
+        2 = Summaries: Grab active, text edit disabled
         3 = Notebook: handled separately (hidden)
         """
+        # Hide the slash-completion popup on tab switch
+        self._popup.hide()
+
+        # Save current tab's text before switching
+        self._tab_texts[self._current_tab] = self.text_edit.toPlainText()
+        self._current_tab = tab_index
+
+        # Restore the target tab's text
+        self.text_edit.setPlainText(self._tab_texts.get(tab_index, ""))
+
         is_prompts = tab_index == 0
         is_responses = tab_index == 1
         is_summaries = tab_index == 2
@@ -594,6 +610,8 @@ class PromptManagementBox(QWidget):
 
         self.grab_btn.setEnabled(is_responses or is_summaries)
         self.summarize_btn.setEnabled(is_responses)
+
+        self.text_edit.setEnabled(not is_summaries)
 
     def is_no_reference(self) -> bool:
         return self.no_reference_checkbox.isChecked()

@@ -373,7 +373,6 @@ class ResearchWorkspace(QWidget):
         def on_fill_complete(result):
             if result and ("sent" in str(result).lower() or "filled" in str(result).lower()):
                 self.statusUpdate.emit(f"Text sent to {platform}")
-                self.prompt_box.clear_text()
             else:
                 self.statusUpdate.emit(f"Failed to send: {result}")
 
@@ -642,12 +641,13 @@ class ResearchWorkspace(QWidget):
         )
         self.prompt_box.set_selection_active(total_selected > 0)
 
-        # Extract placeholders from selected prompts and pass to prompt box
+        # Extract placeholders from selected items in the active tab
         all_placeholders = []
-        for prompt in self.prompts_panel.get_selected_items():
-            for ph in extract_placeholders(prompt.content):
-                if ph not in all_placeholders:
-                    all_placeholders.append(ph)
+        if current_panel:
+            for item in current_panel.get_selected_items():
+                for ph in extract_placeholders(item.content):
+                    if ph not in all_placeholders:
+                        all_placeholders.append(ph)
         self.prompt_box.update_placeholders(all_placeholders)
 
     def _on_clear_selection(self):

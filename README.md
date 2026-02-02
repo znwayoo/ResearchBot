@@ -1,78 +1,47 @@
 # ResearchBot
 
-A desktop research tool that lets you query multiple AI platforms, grab and organize responses, and export your findings from a single interface.
+A desktop prompt management and research tool for working with multiple AI platforms from a single interface.
 
-## Overview
+## What It Does
 
-ResearchBot embeds browser tabs for ChatGPT, Gemini, Perplexity, Claude, and Google side by side with a research workspace. You write prompts, send them to any platform, grab the responses back, categorize and organize them, then export everything when you are done.
+ResearchBot sits between you and the AI platforms you already use. It embeds ChatGPT, Gemini, Perplexity, Claude, and Google in browser tabs alongside a workspace where you build, organize, and reuse prompts. You send the same prompt to multiple platforms without retyping, grab the responses back, and keep everything organized.
 
 ## Features
 
-### Multi-Platform Browsers
-- Embedded browser tabs for ChatGPT, Gemini, Perplexity, Claude, and Google
-- Persistent login sessions across restarts (cookies and storage preserved)
-- Send prompts directly into any platform's input field with optimized JS injection per platform
-- Grab responses back into the workspace with one click
+### Prompt Management
+- Save prompts as reusable pills with categories and colors
+- Select multiple pills to combine them into a single prompt before sending
+- Placeholder variables using `[/NAME]` syntax with a slash-completion popup, so you can build templates like `Analyze [/TOPIC] using [/METHOD]` and fill in the values at send time
+- Persistent selections let you send the same set of prompts to one platform, switch tabs, and send again to another without re-selecting
+- Drag and drop reordering to control prompt composition order
+- Category and color filters to organize large prompt libraries
+
+### File to Prompt Conversion
+- Upload PDF, DOCX, TXT, and 50+ other formats
+- Files are automatically extracted and converted into prompt pills
+- "No Reference" toggle strips bibliography and references sections from academic papers before creating the pill
+
+### Multi-Platform Send and Grab
+- Send prompts directly into ChatGPT, Gemini, Perplexity, or Claude with formatting preserved
+- Grab responses back into the workspace with platform attribution
 - Duplicate detection prevents grabbing the same response twice
-- Green spinning arc loading indicator when pages are loading
-- Back, Refresh, Home, and Clear Data controls per browser tab
+- Select multiple responses and send them to any platform for cross-platform summarization
 
-### Research Workspace
-- **Prompts** - Save, reuse, and combine reusable prompt templates with placeholder variables (`[/NAME]` syntax with slash-completion popup)
-- **Responses** - Store grabbed AI responses with platform attribution
-- **Summaries** - Generate cross-platform summaries from multiple responses
-- **Notebook** - Built-in Markdown editor (see below)
+### Notebook
+- Markdown editor with formatting toolbar
+- Create Prompt button converts notebook content directly into a prompt pill with markdown formatting preserved
 
-### Content Organization
-- Color-coded pill UI in a responsive two-column grid
-- Category system with defaults (Literature, Methodology, Data, Analysis, Results, etc.) and custom categories
-- Six predefined colors plus custom hex color support
-- Drag and drop reordering with smooth animations and persistent ordering
-- Category and color filters with live item counts
-- Multi-select with bulk delete, export, and move operations
-- Persistent selections across sends and summarize so you can reuse the same items on multiple platforms
-- Clear Selection button to deselect all items when done
-- Context-aware buttons that light up or gray out based on the active tab (Send and Save on Prompts, Grab and Summarize on Responses, Grab on Summaries)
-- Move items between Prompts, Responses, and Summaries tabs
-- Copy pill content to clipboard
-
-### File Upload and Prompt Pills
-- Upload up to 5 files (50MB each) supporting 50+ formats (PDF, DOCX, TXT, MD, JSON, code files, and more)
-- Files are automatically extracted and converted into reusable prompt pills
-- File chips auto-remove after pill creation for a clean interface
-- "No Reference" toggle strips bibliography and references sections from extracted content
-- File chips in the prompt box with individual remove buttons
-
-### Export
-- Export to PDF, Markdown, or plain text
-- Export all items or only selected items
-- Formatted PDF output with titles, metadata, and sections
-
-### Markdown Notebook
-- Built-in WYSIWYG editor with bold, italic, underline, strikethrough, headings, lists, and alignment
-- Open and save Markdown files with automatic format conversion
-- Create Prompt button converts notebook content (with markdown formatting) directly into a prompt pill
-- Real-time word and character count
-
-### Downloads Manager
-- Built-in download manager with progress bars and state tracking
-- Configurable download folder
-
-### Status Bar
-- Green progress bar beside status text during file extraction
-- Real-time status messages for all operations
-
-### Logging
-- Color-coded log tab with timestamps (INFO, SUCCESS, WARNING, ERROR)
-- Logs persisted to disk at `~/.researchbot/researchbot.log`
+### Organization and Export
+- Three tabs: Prompts, Responses, and Summaries with move operations between them
+- Categories (Literature, Methodology, Data, Analysis, Results, and custom) with color coding
+- Export selected items to PDF, Markdown, or plain text
 
 ## Tech Stack
 
 | Component | Technology |
 |-----------|-----------|
 | Language | Python 3.10+ |
-| GUI Framework | PyQt6 |
-| Embedded Browsers | PyQt6-WebEngine (QWebEngineView) |
+| GUI | PyQt6 + PyQt6-WebEngine |
 | Database | SQLite |
 | PDF Export | ReportLab |
 | File Parsing | PyPDF2, python-docx |
@@ -80,15 +49,10 @@ ResearchBot embeds browser tabs for ChatGPT, Gemini, Perplexity, Claude, and Goo
 ## Installation
 
 ```bash
-# Clone the repository
 git clone https://github.com/<your-username>/ResearchBot.git
 cd ResearchBot
-
-# Create a virtual environment
 python3 -m venv venv
 source venv/bin/activate
-
-# Install dependencies
 pip install -r requirements.txt
 ```
 
@@ -98,53 +62,38 @@ pip install -r requirements.txt
 python main.py
 ```
 
-On first launch the app creates its data directory at `~/.researchbot/` containing the SQLite database, logs, uploaded files, and session data.
+On first launch the app creates its data directory at `~/.researchbot/` containing the SQLite database, uploaded files, and session data.
 
-### Quick Workflow
+### Workflow
 
-1. Open a browser tab (ChatGPT, Gemini, Perplexity, or Claude) and log in. Sessions persist across restarts.
-2. Type or select saved prompts in the prompt box. Optionally attach files for context injection.
-3. Click **Send** to fill the prompt into the active platform's input. Selections stay active so you can switch tabs and send the same prompts to other platforms.
-4. Click **Grab** to pull the response back into the Responses panel.
-5. Repeat across platforms, then select multiple responses and click **Summarize** to request a cross-platform synthesis.
-6. Click **Clear Selection** when you are done reusing a set of prompts.
-7. Organize with categories, colors, drag and drop, and filters.
-8. **Export** your research to PDF, Markdown, or text.
+1. Log in to your AI platforms in the browser tabs. Sessions persist across restarts.
+2. Build prompts in the Prompts tab or upload files to auto-create prompt pills.
+3. Select the pills you want, optionally fill in placeholder values, and click **Send**.
+4. Switch to another platform tab and send the same selection again.
+5. Click **Grab** to pull responses back. Select multiple responses and click **Summarize** for cross-platform synthesis.
+6. Organize with categories and filters, then **Export** to PDF or Markdown.
 
 ## Project Structure
 
 ```
 ResearchBot/
-  main.py              # Application entry point
-  config.py            # Settings, theme, platform URLs, defaults
-  requirements.txt     # Python dependencies
+  main.py              # Entry point
+  config.py            # Settings, theme, platform URLs
   agents/              # Task analyzer, file injector, response merger
-  ui/                  # PyQt6 widgets (main window, panels, editors, browsers)
-  utils/               # Storage, models, browser controller
-  workers/             # Background threads for file extraction
-  instructions/        # Internal documentation
-  tests/               # Test suite
+  ui/                  # PyQt6 widgets
+  utils/               # Storage, models, clipboard
+  workers/             # Background file extraction threads
 ```
-
-## Configuration
-
-All settings live in `config.py`:
-- Platform URLs and timeouts
-- File upload limits (count and size)
-- Default categories and colors
-- Dark theme color palette
-- Model priority order for multi-platform queries
 
 ## Data Storage
 
-Everything is stored locally:
+Everything is stored locally in `~/.researchbot/`:
 
 | Path | Contents |
 |------|----------|
-| `~/.researchbot/researchbot.db` | SQLite database (prompts, responses, summaries, categories, sessions) |
-| `~/.researchbot/researchbot.log` | Application logs |
-| `~/.researchbot/uploads/` | Uploaded files for context injection |
-| `~/.researchbot/sessions/` | Session data |
+| `researchbot.db` | Prompts, responses, summaries, categories, sessions |
+| `uploads/` | Uploaded files for extraction |
+| `researchbot.log` | Application logs |
 
 ## License
 
