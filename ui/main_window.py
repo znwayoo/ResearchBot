@@ -748,6 +748,17 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def closeEvent(self, event):
+        reply = QMessageBox.question(
+            self,
+            "Quit ResearchBot",
+            "Are you sure you want to close ResearchBot?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            event.ignore()
+            return
+
         self._save_settings()
 
         if self.research_controller:
