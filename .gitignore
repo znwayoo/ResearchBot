@@ -69,6 +69,7 @@ dmypy.json
 *.manifest
 *.spec
 !ResearchBot.spec
+!ResearchBot-windows.spec
 
 # Instructions folder
 instructions/

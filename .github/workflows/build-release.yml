@@ -1,0 +1,111 @@
+name: Build Release
+
+on:
+  workflow_dispatch:  # Manual trigger
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags (e.g., v1.0.0)
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Make build script executable
+        run: chmod +x build_mac.sh
+
+      - name: Build Mac app
+        run: ./build_mac.sh
+
+      - name: Zip Mac app
+        run: |
+          cd dist
+          zip -r ResearchBot-mac.zip ResearchBot.app
+          cd ..
+
+      - name: Upload Mac artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ResearchBot-mac
+          path: dist/ResearchBot-mac.zip
+          retention-days: 90
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build Windows app
+        shell: cmd
+        run: build_windows.bat
+
+      - name: Zip Windows app
+        shell: powershell
+        run: |
+          Compress-Archive -Path dist\ResearchBot -DestinationPath dist\ResearchBot-windows.zip -Force
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ResearchBot-windows
+          path: dist/ResearchBot-windows.zip
+          retention-days: 90
+
+  create-release:
+    needs: [build-mac, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Mac artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ResearchBot-mac
+          path: release/
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ResearchBot-windows
+          path: release/
+
+      - name: Extract tag name
+        id: tag
+        run: echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.tag.outputs.TAG_NAME }}
+          name: Release ${{ steps.tag.outputs.TAG_NAME }}
+          files: |
+            release/ResearchBot-mac.zip
+            release/ResearchBot-windows.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
