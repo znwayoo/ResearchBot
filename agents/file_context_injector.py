@@ -63,11 +63,28 @@ class FileContextInjector:
             with open(file_path, "rb") as file:
                 reader = PdfReader(file)
                 text_parts = []
+                total_pages = len(reader.pages)
+                logger.info(f"PDF has {total_pages} pages")
+
                 for page_num, page in enumerate(reader.pages):
-                    page_text = page.extract_text()
-                    if page_text:
-                        text_parts.append(page_text)
-                return "\n\n".join(text_parts).strip()
+                    try:
+                        page_text = page.extract_text()
+                        if page_text and page_text.strip():
+                            text_parts.append(page_text)
+                            logger.debug(f"Page {page_num + 1}: extracted {len(page_text)} chars")
+                        else:
+                            logger.warning(f"Page {page_num + 1}: no text extracted (may be scanned/image)")
+                    except Exception as page_err:
+                        logger.warning(f"Page {page_num + 1} extraction failed: {page_err}")
+
+                result = "\n\n".join(text_parts).strip()
+
+                if not result:
+                    logger.warning(f"PDF extraction returned empty - file may be scanned or image-based")
+                    return "[PDF appears to be scanned or image-based - no text could be extracted]"
+
+                logger.info(f"Extracted {len(result)} total characters from PDF")
+                return result
         except Exception as e:
             logger.error(f"Error extracting PDF: {e}")
             raise ValueError(f"Failed to extract PDF content: {e}")

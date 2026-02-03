@@ -243,6 +243,7 @@ class ResearchWorkspace(QWidget):
         self.prompt_box.savePromptRequested.connect(self._on_save_prompt)
         self.prompt_box.deleteSelectedRequested.connect(self._on_delete_selected)
         self.prompt_box.filesChanged.connect(self._on_files_changed)
+        self.prompt_box.convertRequested.connect(self._on_convert_files)
         self.notebook_tab.createPromptRequested.connect(self._on_notebook_create_prompt)
 
     def _load_data(self):
@@ -378,12 +379,20 @@ class ResearchWorkspace(QWidget):
         browser.fill_input_only(combined_text, on_fill_complete)
 
     def _on_files_changed(self, files):
-        """Auto-create prompt pills for newly uploaded files."""
-        current_paths = {f.path for f in files}
-        new_files = [f for f in files if f.path not in self._known_file_paths]
-        self._known_file_paths = current_paths
+        """Track uploaded files (no longer auto-converts)."""
+        self._known_file_paths = {f.path for f in files}
+        if files:
+            self.statusUpdate.emit(f"{len(files)} file(s) ready - click Convert to create pills")
 
-        for file in new_files:
+    def _on_convert_files(self):
+        """Convert uploaded files to prompt pills when Convert button is clicked."""
+        files = self.prompt_box.get_files()
+        if not files:
+            return
+
+        self.statusUpdate.emit(f"Converting {len(files)} file(s)...")
+
+        for file in files:
             worker = FileExtractionWorker([file])
             self._file_workers.append(worker)
 
@@ -397,6 +406,10 @@ class ResearchWorkspace(QWidget):
                             continue
                         content_lines.append(line)
                     raw_content = "\n".join(content_lines).strip()
+
+                    # Check if extraction produced empty content
+                    if not raw_content or len(raw_content) < 10:
+                        self.statusUpdate.emit(f"Warning: {f.filename} extracted with little/no content")
 
                     # Strip references section if checkbox is checked
                     if self.prompt_box.is_no_reference():
@@ -416,7 +429,7 @@ class ResearchWorkspace(QWidget):
                     self.prompts_panel.add_item(prompt_item)
                     self.statusUpdate.emit(f"Created prompt from {f.filename}")
 
-                    # Auto-remove the file chip
+                    # Remove the file chip after conversion
                     self._known_file_paths.discard(f.path)
                     self.prompt_box._remove_file(f.filename)
 
@@ -451,8 +464,16 @@ class ResearchWorkspace(QWidget):
         """Strip bibliography/references section from extracted text."""
         import re
         lines = text.split("\n")
+        # Match various reference section headers:
+        # - Optional numbering like "7." or "VII."
+        # - Optional markdown headers (#, ##, ###)
+        # - The word References/Bibliography/Works Cited
+        # - Optional punctuation like colon or period
         ref_pattern = re.compile(
-            r'^\s*#{0,3}\s*(References|Bibliography|Works Cited|REFERENCES|BIBLIOGRAPHY|WORKS CITED)\s*$',
+            r'^\s*(?:#{1,3}\s*)?'  # Optional markdown headers
+            r'(?:[0-9]+\.?\s*|[IVXLC]+\.?\s*)?'  # Optional numbering (arabic or roman)
+            r'(references|bibliography|works\s*cited|cited\s*works|literature\s*cited)'
+            r'\s*[:\.]?\s*$',  # Optional colon/period at end
             re.IGNORECASE,
         )
         for i, line in enumerate(lines):

@@ -122,6 +122,7 @@ class PromptManagementBox(QWidget):
     savePromptRequested = pyqtSignal()
     deleteSelectedRequested = pyqtSignal()
     filesChanged = pyqtSignal(list)
+    convertRequested = pyqtSignal()  # Convert uploaded files to pills
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -193,6 +194,12 @@ class PromptManagementBox(QWidget):
         """)
         self.upload_btn.clicked.connect(self._open_file_dialog)
         file_header.addWidget(self.upload_btn)
+
+        self.convert_btn = QPushButton("Convert")
+        self.convert_btn.setEnabled(False)  # Disabled until files uploaded
+        self._update_convert_button_style()
+        self.convert_btn.clicked.connect(self._on_convert_clicked)
+        file_header.addWidget(self.convert_btn)
 
         file_layout.addLayout(file_header)
 
@@ -550,6 +557,41 @@ class PromptManagementBox(QWidget):
     def _update_file_count(self):
         count = len(self.uploaded_files)
         self.file_count_label.setText(f"Files ({count}/{MAX_FILES})")
+        # Enable/disable convert button based on file count
+        self.convert_btn.setEnabled(count > 0)
+        self._update_convert_button_style()
+
+    def _update_convert_button_style(self):
+        """Update convert button style based on enabled state."""
+        if self.convert_btn.isEnabled():
+            self.convert_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {DARK_THEME['success']};
+                    color: white;
+                    border-radius: 4px;
+                    padding: 5px 10px;
+                    font-size: 11px;
+                    font-weight: bold;
+                }}
+                QPushButton:hover {{
+                    background-color: #388E3C;
+                }}
+            """)
+        else:
+            self.convert_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {DARK_THEME['border']};
+                    color: {DARK_THEME['text_secondary']};
+                    border-radius: 4px;
+                    padding: 5px 10px;
+                    font-size: 11px;
+                }}
+            """)
+
+    def _on_convert_clicked(self):
+        """Emit convert signal when button is clicked."""
+        if self.uploaded_files:
+            self.convertRequested.emit()
 
     def get_text(self) -> str:
         return self.text_edit.toPlainText().strip()
@@ -610,6 +652,9 @@ class PromptManagementBox(QWidget):
         self.save_btn.setEnabled(is_prompts)
         self.upload_btn.setEnabled(is_prompts)
         self.no_reference_checkbox.setEnabled(is_prompts)
+        # Convert button enabled only on prompts tab AND when files exist
+        self.convert_btn.setEnabled(is_prompts and len(self.uploaded_files) > 0)
+        self._update_convert_button_style()
 
         self.grab_btn.setEnabled(is_responses or is_summaries)
         self.summarize_btn.setEnabled(is_responses)
