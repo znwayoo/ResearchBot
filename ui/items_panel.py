@@ -123,6 +123,9 @@ class ItemsPanel(QWidget):
         self._pill_height = 36
         self._pill_width = 200  # Default, will be recalculated
 
+        # Track visible buttons for filtered drag/drop
+        self._visible_buttons: List[ItemButton] = []
+
         self._setup_ui()
         self.setAcceptDrops(True)
 
@@ -303,6 +306,8 @@ class ItemsPanel(QWidget):
         self._rebuild_buttons()
 
     def _rebuild_buttons(self):
+        """Rebuild all buttons and apply current filters."""
+        # Clear existing layout completely
         while self.flow_container.count():
             item = self.flow_container.takeAt(0)
             if item.widget():
@@ -315,14 +320,11 @@ class ItemsPanel(QWidget):
         # Calculate pill width based on container width
         self._calculate_pill_width()
 
-        current_row = QHBoxLayout()
-        current_row.setSpacing(self._pill_spacing)
-        current_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        column_count = 0
-
+        # Create all buttons (parented to scroll_content, but not in layout yet)
         for item in self.items:
-            btn = ItemButton(item)
+            btn = ItemButton(item, parent=self.scroll_content)
             btn.setFixedSize(self._pill_width, self._pill_height)
+            btn.setVisible(False)  # Start hidden, will be shown when added to layout
             btn.doubleClicked.connect(self._on_item_double_clicked)
             btn.selectionChanged.connect(self._on_selection_changed)
             btn.deleteRequested.connect(self._on_delete_requested)
@@ -333,23 +335,12 @@ class ItemsPanel(QWidget):
 
             self.item_buttons.append(btn)
 
-            if column_count >= self._num_columns:
-                self.flow_container.addLayout(current_row)
-                current_row = QHBoxLayout()
-                current_row.setSpacing(self._pill_spacing)
-                current_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
-                column_count = 0
+        # Initially all buttons are visible
+        self._visible_buttons = list(self.item_buttons)
 
-            current_row.addWidget(btn)
-            column_count += 1
-
-        if current_row.count() > 0:
-            current_row.addStretch()
-            self.flow_container.addLayout(current_row)
-
-        self.flow_container.addStretch()
         self._update_order_badges()
         self._refresh_filter_counts()
+        # Apply filters will build the layout with only visible items
         self._apply_filters()
 
     def _calculate_pill_width(self):
@@ -462,12 +453,13 @@ class ItemsPanel(QWidget):
         return filter_text
 
     def _apply_filters(self):
+        """Apply filters and rebuild layout with only visible items."""
         category_filter = self._get_filter_name(self.category_filter.currentText())
         color_filter = self._get_filter_name(self.color_filter.currentText())
 
-        visible_count = 0
-        for btn in self.item_buttons:
-            item = btn.item
+        # Determine which items pass the filter
+        visible_items = []
+        for item in self.items:
             visible = True
 
             if category_filter != "All":
@@ -480,11 +472,75 @@ class ItemsPanel(QWidget):
                 if item_color != color_filter:
                     visible = False
 
-            btn.setVisible(visible)
             if visible:
-                visible_count += 1
+                visible_items.append(item)
 
-        self.count_label.setText(f"{visible_count} items")
+        # Rebuild layout with only visible items
+        self._rebuild_visible_layout(visible_items)
+        self.count_label.setText(f"{len(visible_items)} items")
+
+    def _rebuild_visible_layout(self, visible_items: List):
+        """Rebuild the flow layout with only the specified visible items."""
+        # Build a map of item_id to button for quick lookup
+        id_to_button = {btn.item.id: btn for btn in self.item_buttons}
+
+        # Clear existing row layouts from flow_container
+        while self.flow_container.count():
+            item = self.flow_container.takeAt(0)
+            if item.layout():
+                row_layout = item.layout()
+                # Remove widgets from row (don't delete them, just detach)
+                while row_layout.count():
+                    child = row_layout.takeAt(0)
+                    if child.widget():
+                        # Keep parented to scroll_content to prevent garbage collection
+                        child.widget().setParent(self.scroll_content)
+                        child.widget().setVisible(False)
+                row_layout.deleteLater()
+
+        # Ensure all buttons are hidden and parented correctly
+        for btn in self.item_buttons:
+            if btn.parent() != self.scroll_content:
+                btn.setParent(self.scroll_content)
+            btn.setVisible(False)
+
+        # Calculate pill width
+        self._calculate_pill_width()
+
+        # Create new rows with only visible buttons
+        current_row = QHBoxLayout()
+        current_row.setSpacing(self._pill_spacing)
+        current_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        column_count = 0
+
+        for item in visible_items:
+            btn = id_to_button.get(item.id)
+            if not btn:
+                continue
+
+            btn.setFixedSize(self._pill_width, self._pill_height)
+
+            if column_count >= self._num_columns:
+                current_row.addStretch()
+                self.flow_container.addLayout(current_row)
+                current_row = QHBoxLayout()
+                current_row.setSpacing(self._pill_spacing)
+                current_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
+                column_count = 0
+
+            current_row.addWidget(btn)
+            btn.setVisible(True)
+            column_count += 1
+
+        # Add the last row if it has items
+        if current_row.count() > 0:
+            current_row.addStretch()
+            self.flow_container.addLayout(current_row)
+
+        self.flow_container.addStretch()
+
+        # Store visible buttons for drag/drop operations
+        self._visible_buttons = [id_to_button[item.id] for item in visible_items if item.id in id_to_button]
 
     def get_selected_items(self) -> List:
         return self.selected_items
@@ -614,12 +670,15 @@ class ItemsPanel(QWidget):
         self._last_swap_index = -1
         self._last_direction = 0
 
-        # Capture current positions of all buttons (SortableJS captureAnimationState)
+        # Use visible buttons for drag operations
+        visible_buttons = self._visible_buttons if self._visible_buttons else self.item_buttons
+
+        # Capture current positions of visible buttons (SortableJS captureAnimationState)
         self._captured_positions = {}
-        for btn in self.item_buttons:
+        for btn in visible_buttons:
             self._captured_positions[btn] = btn.pos()
 
-        for i, btn in enumerate(self.item_buttons):
+        for i, btn in enumerate(visible_buttons):
             if btn.item.id == item.id:
                 self._dragged_button = btn
                 self._original_index = i
@@ -729,8 +788,11 @@ class ItemsPanel(QWidget):
         scroll_widget_pos = self.scroll_area.mapFromParent(pos)
         scroll_pos = self.scroll_area.widget().mapFromParent(scroll_widget_pos)
 
+        # Use visible buttons for index calculation
+        all_visible = self._visible_buttons if self._visible_buttons else self.item_buttons
+
         # Get visible buttons (excluding dragged)
-        visible_buttons = [(i, btn) for i, btn in enumerate(self.item_buttons)
+        visible_buttons = [(i, btn) for i, btn in enumerate(all_visible)
                           if btn != self._dragged_button and btn.isVisible()]
 
         if not visible_buttons:
@@ -750,7 +812,7 @@ class ItemsPanel(QWidget):
             # This is simpler and more intuitive than directional thresholds
             if relative_x > 0.5:
                 # Cursor in right half - place after this item
-                return i + 1 if i + 1 <= len(self.item_buttons) - 1 else i
+                return i + 1 if i + 1 <= len(all_visible) - 1 else i
             else:
                 # Cursor in left half - place before this item
                 return i
@@ -764,7 +826,7 @@ class ItemsPanel(QWidget):
         col = min(col, self._num_columns - 1)
 
         target_index = row * self._num_columns + col
-        total_items = len(self.item_buttons)
+        total_items = len(all_visible)
 
         return max(0, min(target_index, total_items - 1))
 
@@ -800,8 +862,11 @@ class ItemsPanel(QWidget):
             y = margin + row * (pill_height + v_spacing)
             return x, y
 
-        # Build list of non-dragged buttons in their current order
-        other_buttons = [btn for btn in self.item_buttons if btn != self._dragged_button]
+        # Use visible buttons for animation (only animate what's shown)
+        all_visible = self._visible_buttons if self._visible_buttons else self.item_buttons
+
+        # Build list of non-dragged visible buttons
+        other_buttons = [btn for btn in all_visible if btn != self._dragged_button and btn.isVisible()]
 
         # Ghost placeholder takes target_index slot
         ghost_x, ghost_y = get_grid_pos(target_index)
@@ -837,24 +902,49 @@ class ItemsPanel(QWidget):
 
             slot += 1
 
-    def _reorder_item(self, item, new_index: int):
-        """Reorder an item to a new position."""
-        old_index = -1
-        for i, existing in enumerate(self.items):
-            if existing.id == item.id:
-                old_index = i
+    def _reorder_item(self, item, new_visible_index: int):
+        """Reorder an item to a new position within the visible (filtered) items."""
+        # Get the list of currently visible items from _visible_buttons
+        # Note: Include ALL buttons in _visible_buttons (the dragged one is hidden but should be included)
+        visible_items = [btn.item for btn in self._visible_buttons]
+
+        # Find old position in visible list
+        old_visible_index = -1
+        for i, visible_item in enumerate(visible_items):
+            if visible_item.id == item.id:
+                old_visible_index = i
                 break
 
-        if old_index == -1 or old_index == new_index:
+        if old_visible_index == -1 or old_visible_index == new_visible_index:
+            self._rebuild_buttons()  # Still rebuild to restore UI
             return
 
-        self.items.pop(old_index)
-        if new_index > old_index:
-            new_index -= 1
-        self.items.insert(new_index, item)
+        # Remove from old position in visible list
+        visible_items.pop(old_visible_index)
+
+        # Adjust new index if needed
+        if new_visible_index > old_visible_index:
+            new_visible_index -= 1
+
+        # Insert at new position in visible list
+        visible_items.insert(new_visible_index, item)
+
+        # Now rebuild the full items list, preserving order of non-visible items
+        visible_ids = {it.id for it in visible_items}
+        non_visible_items = [it for it in self.items if it.id not in visible_ids]
+
+        # Merge: place visible items first in their new order,
+        # then append non-visible items (they won't be affected by the drag anyway)
+        new_items = []
+        for vis_item in visible_items:
+            new_items.append(vis_item)
+        for non_vis_item in non_visible_items:
+            new_items.append(non_vis_item)
+
+        self.items = new_items
 
         for i, it in enumerate(self.items):
             it.display_order = i
 
-        self.orderChanged.emit(item, new_index)
+        self.orderChanged.emit(item, new_visible_index)
         self._rebuild_buttons()
