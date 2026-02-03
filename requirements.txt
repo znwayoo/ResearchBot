@@ -4,5 +4,6 @@ PyPDF2==3.0.1
 pydantic==2.12.5
 pyperclip==1.11.0
 python-docx==1.2.0
+openpyxl==3.1.2
 reportlab==4.4.9
 pyobjc-framework-Cocoa==12.1; sys_platform == "darwin"

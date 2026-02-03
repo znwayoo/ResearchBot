@@ -45,6 +45,8 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 # Text and document formats
 SUPPORTED_FORMATS = [
     ".pdf", ".docx", ".txt", ".csv",  # Original formats
+    ".xlsx", ".xls", ".tsv",  # Spreadsheet and tabular data
+    ".sqlite", ".sqlite3", ".db",  # Database files
     ".md", ".markdown",  # Markdown
     ".json", ".xml", ".yaml", ".yml",  # Data formats
     ".html", ".htm",  # Web formats

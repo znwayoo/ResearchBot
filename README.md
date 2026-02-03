@@ -17,8 +17,9 @@ ResearchBot sits between you and the AI platforms you already use. It embeds Cha
 - Category and color filters to organize large prompt libraries
 
 ### File to Prompt Conversion
-- Upload PDF, DOCX, TXT, and 50+ other formats
+- Upload PDF, DOCX, Excel, CSV, and 50+ other formats
 - Files are automatically extracted and converted into prompt pills
+- Spreadsheet and database files (XLSX, CSV, TSV, SQLite) are formatted as markdown tables
 - "No Reference" toggle strips bibliography and references sections from academic papers before creating the pill
 
 ### Multi-Platform Send and Grab
@@ -44,7 +45,21 @@ ResearchBot sits between you and the AI platforms you already use. It embeds Cha
 | GUI | PyQt6 + PyQt6-WebEngine |
 | Database | SQLite |
 | PDF Export | ReportLab |
-| File Parsing | PyPDF2, python-docx |
+| File Parsing | PyPDF2, python-docx, openpyxl |
+
+## Supported File Formats
+
+| Category | Extensions |
+|----------|------------|
+| Documents | `.pdf`, `.docx`, `.txt`, `.rtf`, `.md`, `.markdown` |
+| Spreadsheets | `.xlsx`, `.xls`, `.csv`, `.tsv` |
+| Databases | `.sqlite`, `.sqlite3`, `.db` |
+| Data | `.json`, `.xml`, `.yaml`, `.yml` |
+| Web | `.html`, `.htm` |
+| Code | `.py`, `.js`, `.ts`, `.jsx`, `.tsx`, `.java`, `.c`, `.cpp`, `.h`, `.hpp`, `.css`, `.scss`, `.sass`, `.sql`, `.sh`, `.bash`, `.go`, `.rs`, `.rb`, `.php`, `.swift`, `.kt`, `.scala`, `.r`, `.ipynb` |
+| Config | `.log`, `.ini`, `.conf`, `.cfg`, `.env`, `.gitignore`, `.dockerignore` |
+
+Spreadsheet and database files are automatically converted to markdown tables for easy reading by AI platforms.
 
 ## Installation
 

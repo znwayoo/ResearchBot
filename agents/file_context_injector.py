@@ -2,11 +2,13 @@
 
 import csv
 import logging
+import sqlite3
 from pathlib import Path
 from typing import List
 
 from PyPDF2 import PdfReader
 from docx import Document
+from openpyxl import load_workbook
 
 from utils.models import UploadedFile
 
@@ -40,7 +42,13 @@ class FileContextInjector:
         extractors = {
             ".pdf": FileContextInjector._extract_pdf,
             ".docx": FileContextInjector._extract_docx,
-            ".csv": FileContextInjector._extract_csv
+            ".csv": FileContextInjector._extract_csv,
+            ".xlsx": FileContextInjector._extract_xlsx,
+            ".xls": FileContextInjector._extract_xlsx,
+            ".tsv": FileContextInjector._extract_tsv,
+            ".sqlite": FileContextInjector._extract_sqlite,
+            ".sqlite3": FileContextInjector._extract_sqlite,
+            ".db": FileContextInjector._extract_sqlite,
         }
 
         # Add all text types to use txt extractor
@@ -138,6 +146,124 @@ class FileContextInjector:
         except Exception as e:
             logger.error(f"Error extracting CSV: {e}")
             raise ValueError(f"Failed to extract CSV content: {e}")
+
+    @staticmethod
+    def _extract_xlsx(file_path: str) -> str:
+        """Extract Excel content and format as markdown table."""
+        try:
+            workbook = load_workbook(file_path, read_only=True, data_only=True)
+            all_sheets = []
+
+            for sheet_name in workbook.sheetnames:
+                sheet = workbook[sheet_name]
+                rows = list(sheet.iter_rows(values_only=True))
+
+                if not rows:
+                    continue
+
+                # Filter out completely empty rows
+                rows = [r for r in rows if any(cell is not None for cell in r)]
+                if not rows:
+                    continue
+
+                # Convert None to empty string and all values to strings
+                rows = [[str(cell) if cell is not None else "" for cell in row] for row in rows]
+
+                headers = rows[0]
+                header_line = "| " + " | ".join(headers) + " |"
+                separator = "|" + "|".join(["---"] * len(headers)) + "|"
+
+                data_lines = []
+                for row in rows[1:]:
+                    # Pad row if shorter than headers
+                    padded_row = row + [""] * (len(headers) - len(row))
+                    data_lines.append("| " + " | ".join(padded_row[:len(headers)]) + " |")
+
+                sheet_content = f"**Sheet: {sheet_name}**\n\n" + "\n".join([header_line, separator] + data_lines)
+                all_sheets.append(sheet_content)
+
+            workbook.close()
+            return "\n\n".join(all_sheets)
+
+        except Exception as e:
+            logger.error(f"Error extracting Excel: {e}")
+            raise ValueError(f"Failed to extract Excel content: {e}")
+
+    @staticmethod
+    def _extract_tsv(file_path: str) -> str:
+        """Extract TSV content and format as markdown table."""
+        try:
+            with open(file_path, "r", encoding="utf-8") as file:
+                reader = csv.reader(file, delimiter="\t")
+                rows = list(reader)
+
+            if not rows:
+                return ""
+
+            headers = rows[0]
+            header_line = "| " + " | ".join(headers) + " |"
+            separator = "|" + "|".join(["---"] * len(headers)) + "|"
+
+            data_lines = []
+            for row in rows[1:]:
+                if len(row) == len(headers):
+                    data_lines.append("| " + " | ".join(row) + " |")
+
+            return "\n".join([header_line, separator] + data_lines)
+
+        except Exception as e:
+            logger.error(f"Error extracting TSV: {e}")
+            raise ValueError(f"Failed to extract TSV content: {e}")
+
+    @staticmethod
+    def _extract_sqlite(file_path: str) -> str:
+        """Extract SQLite database schema and sample data."""
+        try:
+            conn = sqlite3.connect(file_path)
+            cursor = conn.cursor()
+
+            # Get all table names
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+            tables = [row[0] for row in cursor.fetchall()]
+
+            if not tables:
+                conn.close()
+                return "[Empty database - no tables found]"
+
+            all_tables = []
+            for table_name in tables:
+                # Get column info
+                cursor.execute(f"PRAGMA table_info({table_name})")
+                columns = cursor.fetchall()
+                col_names = [col[1] for col in columns]
+
+                # Get row count
+                cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+                row_count = cursor.fetchone()[0]
+
+                # Get sample data (first 10 rows)
+                cursor.execute(f"SELECT * FROM {table_name} LIMIT 10")
+                sample_rows = cursor.fetchall()
+
+                # Build markdown table
+                header_line = "| " + " | ".join(col_names) + " |"
+                separator = "|" + "|".join(["---"] * len(col_names)) + "|"
+
+                data_lines = []
+                for row in sample_rows:
+                    row_str = [str(cell) if cell is not None else "" for cell in row]
+                    data_lines.append("| " + " | ".join(row_str) + " |")
+
+                table_content = f"**Table: {table_name}** ({row_count} rows)\n\n"
+                table_content += "\n".join([header_line, separator] + data_lines)
+                all_tables.append(table_content)
+
+            conn.close()
+            return "\n\n".join(all_tables)
+
+        except Exception as e:
+            logger.error(f"Error extracting SQLite: {e}")
+            raise ValueError(f"Failed to extract SQLite content: {e}")
 
     @staticmethod
     def build_file_context(files: List[UploadedFile]) -> str:
