@@ -1,6 +1,8 @@
 """ResearchBot configuration settings."""
 
+import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -1128,3 +1130,60 @@ def setup_logging(level: int = logging.INFO):
 
 # Initialize directories on import
 initialize_directories()
+
+
+# Dialog path persistence
+DIALOG_PATHS_FILE = CONFIG_DIR / "dialog_paths.json"
+
+
+def get_last_dialog_path(dialog_key: str, default: str = None) -> str:
+    """Get the last used path for a specific dialog.
+
+    Args:
+        dialog_key: Unique identifier for the dialog (e.g., 'file_upload', 'notebook_open')
+        default: Default path to return if no saved path exists
+
+    Returns:
+        The last used path or the default path
+    """
+    if default is None:
+        default = str(Path.home())
+
+    try:
+        if DIALOG_PATHS_FILE.exists():
+            with open(DIALOG_PATHS_FILE, 'r', encoding='utf-8') as f:
+                paths = json.load(f)
+                saved_path = paths.get(dialog_key)
+                if saved_path and os.path.isdir(saved_path):
+                    return saved_path
+    except (json.JSONDecodeError, IOError):
+        pass
+
+    return default
+
+
+def save_dialog_path(dialog_key: str, file_path: str) -> None:
+    """Save the directory of the selected file for a specific dialog.
+
+    Args:
+        dialog_key: Unique identifier for the dialog
+        file_path: The full path of the file selected (directory will be extracted)
+    """
+    try:
+        path = Path(file_path)
+        directory = str(path.parent if path.is_file() else path)
+
+        paths = {}
+        if DIALOG_PATHS_FILE.exists():
+            try:
+                with open(DIALOG_PATHS_FILE, 'r', encoding='utf-8') as f:
+                    paths = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                paths = {}
+
+        paths[dialog_key] = directory
+
+        with open(DIALOG_PATHS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(paths, f, indent=2)
+    except (IOError, OSError):
+        pass

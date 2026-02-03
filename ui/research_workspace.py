@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from config import DARK_THEME
+from config import DARK_THEME, get_last_dialog_path, save_dialog_path
 from utils.placeholder_utils import (
     extract_placeholders,
     parse_placeholder_values,
@@ -937,15 +937,20 @@ class ResearchWorkspace(QWidget):
             self.statusUpdate.emit("No items to export")
             return
 
+        from pathlib import Path
+        last_path = get_last_dialog_path("export_items")
+        default_filename = f"{item_type}_export.pdf"
         file_path, selected_filter = QFileDialog.getSaveFileName(
             self,
             f"Export {item_type.title()}",
-            f"{item_type}_export.pdf",
+            str(Path(last_path) / default_filename),
             "PDF Files (*.pdf);;Text Files (*.txt);;Markdown Files (*.md);;All Files (*)"
         )
 
         if not file_path:
             return
+
+        save_dialog_path("export_items", file_path)
 
         try:
             if file_path.endswith('.pdf') or 'PDF' in selected_filter:

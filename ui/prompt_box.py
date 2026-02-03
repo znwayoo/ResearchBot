@@ -22,7 +22,15 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from config import DARK_THEME, MAX_FILE_SIZE, MAX_FILES, SUPPORTED_FORMATS, UPLOAD_DIR
+from config import (
+    DARK_THEME,
+    MAX_FILE_SIZE,
+    MAX_FILES,
+    SUPPORTED_FORMATS,
+    UPLOAD_DIR,
+    get_last_dialog_path,
+    save_dialog_path,
+)
 from utils.models import UploadedFile
 
 
@@ -487,14 +495,16 @@ class PromptManagementBox(QWidget):
         formats = " ".join([f"*{fmt}" for fmt in SUPPORTED_FORMATS])
         file_filter = f"Supported Files ({formats})"
 
+        last_path = get_last_dialog_path("file_upload")
         files, _ = QFileDialog.getOpenFileNames(
             self,
             "Select Files",
-            str(Path.home()),
+            last_path,
             file_filter
         )
 
         if files:
+            save_dialog_path("file_upload", files[0])
             self._add_files(files[:remaining])
 
     def _add_files(self, file_paths: List[str]):

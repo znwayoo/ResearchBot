@@ -24,7 +24,16 @@ from PyQt6.QtWidgets import (
 from agents.file_context_injector import FileContextInjector
 from agents.response_merger import ResponseMerger
 from agents.task_analyzer import TaskAnalyzer
-from config import APP_NAME, APP_VERSION, ASSETS_DIR, DARK_THEME, WINDOW_HEIGHT, WINDOW_WIDTH
+from config import (
+    APP_NAME,
+    APP_VERSION,
+    ASSETS_DIR,
+    DARK_THEME,
+    WINDOW_HEIGHT,
+    WINDOW_WIDTH,
+    get_last_dialog_path,
+    save_dialog_path,
+)
 from ui.research_workspace import ResearchWorkspace
 from ui.sidebar_tabs import BrowserTabs
 from utils.clipboard_parser import ClipboardParser
@@ -607,10 +616,12 @@ class MainWindow(QMainWindow):
             return
 
         if format_type == "pdf":
+            last_path = get_last_dialog_path("export_pdf")
             file_path, _ = QFileDialog.getSaveFileName(
-                self, "Save PDF", "", "PDF Files (*.pdf)"
+                self, "Save PDF", last_path, "PDF Files (*.pdf)"
             )
             if file_path:
+                save_dialog_path("export_pdf", file_path)
                 success = ExportService.export_pdf(self.current_response, file_path)
                 if success:
                     self.status_bar.showMessage(f"Exported to {file_path}")
@@ -618,10 +629,12 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, "Export Failed", "Failed to export PDF.")
 
         elif format_type == "markdown":
+            last_path = get_last_dialog_path("export_markdown")
             file_path, _ = QFileDialog.getSaveFileName(
-                self, "Save Markdown", "", "Markdown Files (*.md)"
+                self, "Save Markdown", last_path, "Markdown Files (*.md)"
             )
             if file_path:
+                save_dialog_path("export_markdown", file_path)
                 success = ExportService.export_markdown(self.current_response, file_path)
                 if success:
                     self.status_bar.showMessage(f"Exported to {file_path}")

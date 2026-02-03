@@ -34,7 +34,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QColor, QFont, QTextBlockFormat, QTextCharFormat, QTextCursor, QTextFormat, QTextListFormat
 
-from config import CONFIG_DIR, DARK_THEME, PLATFORMS
+from config import CONFIG_DIR, DARK_THEME, PLATFORMS, get_last_dialog_path, save_dialog_path
 
 
 class BrowserPage(QWebEnginePage):
@@ -2957,14 +2957,16 @@ class MarkdownNotebookTab(QWidget):
         notes_dir = CONFIG_DIR / "notes"
         notes_dir.mkdir(parents=True, exist_ok=True)
 
+        last_path = get_last_dialog_path("notebook_open", str(notes_dir))
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Open Note",
-            str(notes_dir),
+            last_path,
             "Markdown Files (*.md);;Text Files (*.txt);;All Files (*)"
         )
 
         if file_path:
+            save_dialog_path("notebook_open", file_path)
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
@@ -3218,14 +3220,16 @@ class MarkdownNotebookTab(QWidget):
         else:
             title = self.title_input.text().strip() or "Untitled"
             default_name = f"{title}.md"
+            last_dir = get_last_dialog_path("notebook_save", str(notes_dir))
             file_path, _ = QFileDialog.getSaveFileName(
                 self,
                 "Save Note",
-                str(notes_dir / default_name),
+                str(Path(last_dir) / default_name),
                 "Markdown Files (*.md);;Text Files (*.txt)"
             )
 
         if file_path:
+            save_dialog_path("notebook_save", file_path)
             try:
                 content = self._document_to_markdown()
 
